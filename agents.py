@@ -64,7 +64,7 @@ ACTION_ENERGY_COST: Dict[str, float] = {
     # "reproduce" uses the Malthusian formula (§3.18), computed at call time.
 }
 
-REPRODUCE_BASE_COST: float = 0.35  # C0, §3.18
+REPRODUCE_BASE_COST: float = 0.10  # C0, §3.18
 INTERACTION_RADIUS: int = 3        # how far an agent can reach for social actions
 
 ROLES: List[str] = ["Forager", "Processor", "Warrior", "Queen"]
