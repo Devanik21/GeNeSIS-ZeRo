@@ -4,7 +4,7 @@ GeNeSIS_V.py — OMNIGENESIS: The Unified Field of Artificial Life
 
 The Streamlit frontend. Ties together all eleven backend modules built
 across this project: metacognition, consciousness, biology, world,  
-agents, evolution, chemistry, civilization, geometry, narrative, nobel.
+agents, evolution, chemistry, civilization, geometry, narrative, nobel. 
 
 Lazy-loading architecture (masterplan §6, honouring the 2GB RAM law in
 §2): a sidebar radio — not st.tabs — decides which panel's EXPENSIVE
