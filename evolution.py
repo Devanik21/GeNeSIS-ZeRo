@@ -34,7 +34,7 @@ EPS = 1e-12
 # ----------------------------------------------------------------------------
 POP_INITIAL: int = 64
 POP_FLOOR: int = 48
-POP_CEILING: int = 512
+POP_CEILING: int = 128
 IMMIGRANT_META_BLEND: float = 0.40  # "40% blend of the most meta-fit agent's H_meta"
 
 META_FITNESS_EVERY: int = 25
