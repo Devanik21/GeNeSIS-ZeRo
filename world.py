@@ -329,7 +329,7 @@ class GenesisWorld:
         density_damping = 1.0 / (1.0 + self.population_density)
 
         growth = (
-            0.01
+            0.04
             * self.weather_amplitude
             * density_damping
             * rate_multiplier[..., None]
