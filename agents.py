@@ -287,7 +287,7 @@ class BioHyperAgent:
     def _do_eat(self, world: GenesisWorld) -> float:
         gx, gy = world.wrap(self.x, self.y)
         available = world.resource_grid[gy, gx, :].copy()
-        consumed = np.minimum(available, 0.3)
+        consumed = np.minimum(available, 0.6)
         world.resource_grid[gy, gx, :] -= consumed
         gained = float(consumed.sum())
         self.energy = min(2.0, self.energy + gained)
