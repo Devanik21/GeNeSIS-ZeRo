@@ -32,9 +32,9 @@ EPS = 1e-12
 # ----------------------------------------------------------------------------
 # Population bounds  (§4.6)
 # ----------------------------------------------------------------------------
-POP_INITIAL: int = 32
-POP_FLOOR: int = 28
-POP_CEILING: int = 128
+POP_INITIAL: int = 64
+POP_FLOOR: int = 48
+POP_CEILING: int = 512
 IMMIGRANT_META_BLEND: float = 0.40  # "40% blend of the most meta-fit agent's H_meta"
 
 META_FITNESS_EVERY: int = 25
