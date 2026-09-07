@@ -3,7 +3,7 @@
 # ⬡ GeNeSIS V — OMNIGENESIS
 
 ### The Unified Field of Artificial Life
-Copyright 2026 Devanik · GeNeSIS V (OMNIGENESIS)
+· GeNeSIS V (OMNIGENESIS)
 *Quantum Cognition · Molecular Genetics · Real Chemistry · Emergent Civilization*
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)]()
