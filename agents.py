@@ -64,8 +64,27 @@ ACTION_ENERGY_COST: Dict[str, float] = {
     # "reproduce" uses the Malthusian formula (§3.18), computed at call time.
 }
 
-REPRODUCE_BASE_COST: float = 0.10  # C0, §3.18
+REPRODUCE_BASE_COST: float = 0.35  # C0, §3.18
 INTERACTION_RADIUS: int = 3        # how far an agent can reach for social actions
+
+BASAL_METABOLIC_COST: float = 0.010  # flat per-tick "cost of living", charged
+# regardless of action chosen (a real basal-metabolic-rate analogue). Its
+# absence was diagnosed as a root cause of unstable population dynamics: with
+# zero cost to simply existing, and REST actively granting free energy (see
+# _do_rest), nothing in the model created genuine pressure to eat regularly,
+# so the learned policy rarely chose to (measured: 455 eat actions against
+# 2,138 meta_invent calls over a 150-tick, 128-agent run) and the population
+# was only ever held up by evolution.py's immigration safety net rather than
+# by a working ecology.
+CRITICAL_HUNGER_THRESHOLD: float = 0.4  # below this, survival instinct
+# overrides every other drive, including fear -- resting does not address
+# starvation, so a critically hungry agent needs to eat, not hide.
+REPRODUCTION_COOLDOWN: int = 25  # minimum ticks between an agent's successful
+# reproductions -- a real inter-birth-interval constraint. Without it, a
+# well-fed agent reproduced at nearly every opportunity (measured: 15,861
+# reproduce actions against 7,169 eat actions over a 300-tick run), which is
+# what actually drove population to explode to the hard ceiling and pin
+# there instead of growing gradually.
 
 ROLES: List[str] = ["Forager", "Processor", "Warrior", "Queen"]
 
@@ -180,6 +199,7 @@ class BioHyperAgent:
         self.gol_grid: np.ndarray = gol_seed_from_dna(dna)
 
         self.tick_count = 0
+        self.last_reproduction_tick: int = -REPRODUCTION_COOLDOWN
 
     # ------------------------------------------------------------------
     # Sense
@@ -199,6 +219,14 @@ class BioHyperAgent:
         fear = self.hrc.emotion("FEAR")
         anger = self.hrc.emotion("ANGER")
         phi_last = self.hrc.phi_history[-1] if self.hrc.phi_history else 0.0
+
+        # Survival instinct: critical hunger overrides every other drive,
+        # including fear -- resting does not feed you. This is the fix for a
+        # real, measured problem (see BASAL_METABOLIC_COST above): without a
+        # homeostatic hunger drive, the learned Born-rule policy essentially
+        # never prioritised eating on its own.
+        if self.energy < CRITICAL_HUNGER_THRESHOLD:
+            return ACTION_INDEX["eat"]
 
         # SURVIVE mode: strong fear overrides toward rest (retreat-to-safety proxy)
         if fear > 0.7:
@@ -232,6 +260,7 @@ class BioHyperAgent:
         population: List["BioHyperAgent"],
         novelty_scorer=None,
         civ_memory=None,
+        tick: int = 0,
     ) -> float:
         name = ACTION_NAMES[action_idx]
         self.action_counts[name] += 1
@@ -248,7 +277,7 @@ class BioHyperAgent:
         elif name == "communicate":
             reward += self._do_communicate(population)
         elif name == "reproduce":
-            reward += self._do_reproduce(world, population)
+            reward += self._do_reproduce(world, population, tick)
         elif name == "invent":
             reward += self._do_invent(novelty_scorer, civ_memory)
         elif name == "rest":
@@ -287,7 +316,7 @@ class BioHyperAgent:
     def _do_eat(self, world: GenesisWorld) -> float:
         gx, gy = world.wrap(self.x, self.y)
         available = world.resource_grid[gy, gx, :].copy()
-        consumed = np.minimum(available, 0.6)
+        consumed = np.minimum(available, 0.3)
         world.resource_grid[gy, gx, :] -= consumed
         gained = float(consumed.sum())
         self.energy = min(2.0, self.energy + gained)
@@ -323,7 +352,9 @@ class BioHyperAgent:
         )
         return 0.05 * rho + 0.02 * acc
 
-    def _do_reproduce(self, world: GenesisWorld, population: List["BioHyperAgent"]) -> float:
+    def _do_reproduce(self, world: GenesisWorld, population: List["BioHyperAgent"], tick: int = 0) -> float:
+        if tick - self.last_reproduction_tick < REPRODUCTION_COOLDOWN:
+            return -0.01  # a small honest cost for trying too soon, not a silent block
         n = len(population)
         cost = REPRODUCE_BASE_COST * (1.0 + 0.5 * (n / 128.0) ** 2)
         if self.energy < cost + 0.1:
@@ -331,7 +362,11 @@ class BioHyperAgent:
         partner = self._nearest_compatible_partner(population)
         if partner is None:
             return -0.02
+        if tick - partner.last_reproduction_tick < REPRODUCTION_COOLDOWN:
+            return -0.02  # nearest compatible partner is still in its own cooldown
         self.energy -= cost
+        self.last_reproduction_tick = tick
+        partner.last_reproduction_tick = tick
         # child creation is handled by the caller (evolution.py doesn't exist
         # yet); here we just signal intent + pay the cost. See make_child().
         self._pending_reproduction_partner = partner
@@ -351,7 +386,12 @@ class BioHyperAgent:
         return reward
 
     def _do_rest(self, world: GenesisWorld) -> float:
-        self.energy = min(2.0, self.energy + 0.02)
+        # Fixed alongside the hunger drive above: rest previously granted a
+        # flat +0.02 energy with no cost and no resource requirement --
+        # literal energy creation, and a latent exploit that could sustain an
+        # agent indefinitely without ever eating. Real rest conserves energy
+        # and relieves stress; it does not manufacture food.
+        self.energy = min(2.0, self.energy + 0.003)
         self.health = min(1.0, self.health + 0.02)
         wonder = self.hrc.emotion("WONDER")
         world.vote_weather(wonder - 0.5)
@@ -541,10 +581,14 @@ class BioHyperAgent:
         self.age += 1
         self.tick_count += 1
 
+        # Basal metabolic cost: charged every tick regardless of action,
+        # before anything else touches energy -- see BASAL_METABOLIC_COST.
+        self.energy = max(0.0, self.energy - BASAL_METABOLIC_COST)
+
         events = self.evolve()
         obs = self.sense(world)
         action_idx = self.decide(obs)
-        reward = self.execute(action_idx, world, population, novelty_scorer, civ_memory)
+        reward = self.execute(action_idx, world, population, novelty_scorer, civ_memory, tick)
         self.learn(reward)
 
         if tick % KURAMOTO_EVERY == 0:
