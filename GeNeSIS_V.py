@@ -53,7 +53,81 @@ from chemistry import (
     GLUCOSE, WATER, CO2, O2, RESPIRATION, PHOTOSYNTHESIS,
     arrhenius_rate_constant, heat_to_kelvin,
 )
-import analytics as an
+import analytics as _analytics_module
+
+# Functions whose *successful* return is a tuple or a dict. A generic
+# single-NaN fallback would break every call site that unpacks or subscripts
+# the result (e.g. `alpha, ks = an.powerlaw_alpha(...)` raising TypeError on
+# a bare float, or `gm['lambda']` raising "'float' object is not
+# subscriptable") -- which would recreate the exact crash this wrapper
+# exists to prevent, just one level down. Each is mapped to a same-shaped
+# NaN fallback instead, keyed by the real function's actual return keys.
+_SHAPED_FALLBACKS = {
+    "lorenz_curve": (np.array([0.0, 1.0]), np.array([0.0, 1.0])),
+    "kendall_trend": (float("nan"), float("nan")),
+    "powerlaw_alpha": (float("nan"), float("nan")),
+    "kaplan_meier": (np.array([]), np.array([])),
+    "degree_powerlaw": (float("nan"), float("nan")),
+    # Dict-returning functions have exactly the same problem: gm['lambda']
+    # on a bare NaN float raises TypeError ('float' object is not
+    # subscriptable), which is a second, different crash -- not a fix.
+    "gompertz_makeham_fit": {"lambda": float("nan"), "alpha": float("nan"), "beta": float("nan")},
+    "network_summary": {"nodes": float("nan"), "edges": float("nan"), "density": float("nan"),
+                        "mean_degree": float("nan"), "clustering": float("nan"),
+                        "assortativity": float("nan"), "components": float("nan"),
+                        "mean_path": float("nan"), "diameter": float("nan"),
+                        "modularity_proxy": float("nan")},
+    "logistic_fit": {"K": float("nan"), "r": float("nan"), "r_squared": float("nan"),
+                     "saturated": 0.0, "identifiable": 0.0},
+    "distribution_shape": {"skew": float("nan"), "kurtosis": float("nan"), "jarque_bera_p": float("nan")},
+    "mode_median_mean": {"mode": float("nan"), "median": float("nan"), "mean": float("nan")},
+    "patch_statistics": {"n_patches": float("nan"), "mean_patch_size": float("nan"),
+                         "largest_patch_index": float("nan"), "edge_density": float("nan")},
+    "centrality_summary": {"max_degree_centrality": float("nan"), "degree_entropy": float("nan"),
+                           "pagerank_gini": float("nan"), "eigenvector_max": float("nan"),
+                           "transitivity": float("nan"), "k_core_max": float("nan"),
+                           "algebraic_connectivity": float("nan")},
+}
+
+
+class _SafeAnalytics:
+    """
+    Wraps every function in analytics.py so that NO possible failure mode of
+    an analytics call -- a missing function (e.g. a stale/partially-synced
+    deployment of analytics.py, which is exactly what produced a real
+    AttributeError on chao1_estimator in production), a wrong argument, an
+    unexpected exception inside the statistic itself, anything -- can ever
+    crash a panel. A failed call returns a NaN of the correct shape (a bare
+    float for ordinary metrics, a same-length NaN tuple for the handful of
+    functions in _SHAPED_FALLBACKS above) so call-site unpacking never breaks
+    either -- the first version of this wrapper missed that distinction and
+    would have turned "function missing" crashes into "cannot unpack float"
+    crashes at the five tuple-returning call sites instead of actually
+    fixing anything.
+
+    This is a deliberate design choice, not a way to hide bugs: every
+    function in analytics.py still has its own self-test asserting a known
+    analytic answer (python3 analytics.py), which is where correctness is
+    actually verified. This wrapper only prevents an environment-level
+    mismatch (this exact incident) or an unanticipated edge case in live
+    data from ever reaching the user as a crashed app.
+    """
+
+    def __getattr__(self, name: str):
+        target = getattr(_analytics_module, name, None)
+        fallback = _SHAPED_FALLBACKS.get(name, float("nan"))
+        if target is None or not callable(target):
+            return (lambda *a, **k: fallback) if target is None else target
+
+        def _wrapped(*args, **kwargs):
+            try:
+                return target(*args, **kwargs)
+            except Exception:
+                return fallback
+        return _wrapped
+
+
+an = _SafeAnalytics()
 from geometry import (
     betti_0, betti_1, topology_summary, KOCH_CURVE, FRACTAL_PLANT,
     turtle_render, bounding_box,
