@@ -777,6 +777,26 @@ def render_civilization() -> None:
             f.update_layout(title="Invention rate over time", xaxis_title="tick", yaxis_title="inventions")
             st.plotly_chart(_small(f, 260), width="stretch")
 
+    st.markdown("#### Tech-tree network structure")
+    ns = an.network_summary(civ.tech_tree)
+    cs = an.centrality_summary(civ.tech_tree)
+    alpha_deg, ks_deg = an.degree_powerlaw(civ.tech_tree)
+    c = st.columns(5)
+    c[0].metric("Density", _fmt(ns["density"], 5))
+    c[1].metric("Mean degree", _fmt(ns["mean_degree"]))
+    c[2].metric("Components", _fmt(ns["components"], 0))
+    c[3].metric("Max k-core", _fmt(cs["k_core_max"], 0))
+    c[4].metric("Degree entropy", _fmt(cs["degree_entropy"]))
+    c = st.columns(5)
+    c[0].metric("Transitivity", _fmt(cs["transitivity"], 4))
+    c[1].metric("Assortativity", _fmt(ns["assortativity"], 4),
+                help="Do high-degree inventions connect to other high-degree ones?")
+    c[2].metric("PageRank Gini", _fmt(cs["pagerank_gini"]),
+                help="Inequality of influence across the technology graph")
+    c[3].metric("Degree power-law α", _fmt(alpha_deg),
+                help="Scale-free networks typically fall in the 2-3 range")
+    c[4].metric("Global efficiency", _fmt(an.global_efficiency(civ.tech_tree), 4))
+
     st.markdown("#### Alliance network")
     G = nx.Graph()
     for tid in active:
@@ -1286,7 +1306,7 @@ def render_complexity() -> None:
 
     c = st.columns(4)
     c[0].metric("Hurst exponent", _fmt(h),
-                help="R/S rescaled range. 0.5 random walk, >0.5 persistent/trending, <0.5 mean-reverting")
+                help="R/S rescaled range. 0.5 random walk, >0.5 persistent, <0.5 mean-reverting. Positively biased on short series: true-0.5 white noise measures ~0.57 at n=200, ~0.55 at n=3000, so treat 0.5-0.6 as indistinguishable from random.")
     c[1].metric("DFA α", _fmt(dfa),
                 help="Detrended fluctuation analysis. 0.5 uncorrelated, 1.0 is 1/f long-range correlation")
     c[2].metric("Permutation entropy", _fmt(pe),
@@ -1302,6 +1322,35 @@ def render_complexity() -> None:
     c[2].metric("Coeff. of variation", _fmt(cv))
     c[3].metric("Kendall τ trend", f"{_fmt(tau)}  (p={_fmt(p_tau)})",
                 help="Monotonic trend strength and its significance")
+
+    st.markdown("#### Regularity, predictability and burstiness")
+    c = st.columns(4)
+    c[0].metric("Sample entropy", _fmt(an.sample_entropy(pop_series)),
+                help="Richman-Moorman. Lower = more self-similar and regular")
+    c[1].metric("Approximate entropy", _fmt(an.approximate_entropy(pop_series)),
+                help="Pincus (1991) regularity statistic")
+    c[2].metric("Lempel-Ziv complexity", _fmt(an.lempel_ziv_complexity(pop_series)),
+                help="Distinct-phrase count of the binarised series, normalised. ~1 random, →0 periodic")
+    c[3].metric("Higuchi fractal dim.", _fmt(an.higuchi_fractal_dimension(pop_series)),
+                help="1.0 a smooth line, ~1.5 Brownian motion, ~2.0 white noise")
+
+    c = st.columns(4)
+    c[0].metric("Burstiness", _fmt(an.burstiness(pop_series)),
+                help="Goh-Barabasi. −1 perfectly regular, 0 Poisson, +1 maximally bursty")
+    c[1].metric("Recurrence rate", _fmt(an.recurrence_rate(pop_series)),
+                help="RQA: fraction of state pairs within tolerance")
+    c[2].metric("Autocorrelation time", _fmt(an.autocorrelation_time(pop_series), 1),
+                help="First lag at which autocorrelation falls below 1/e")
+    c[3].metric("Allan variance", _fmt(an.allan_variance(pop_series), 4))
+
+    shp = an.distribution_shape(pop_series)
+    c = st.columns(4)
+    c[0].metric("Skewness", _fmt(shp["skew"]))
+    c[1].metric("Excess kurtosis", _fmt(shp["kurtosis"]))
+    c[2].metric("Jarque-Bera p", _fmt(shp["jarque_bera_p"], 4),
+                help="p < 0.05 rejects normality of the series")
+    c[3].metric("Doubling time", _fmt(an.doubling_time(pop_series), 1),
+                help="ln(2)/r at the current growth rate, in ticks")
 
     st.markdown("#### Logistic (Verhulst) growth fit")
     fit = an.logistic_fit(pop_series)
@@ -1334,6 +1383,16 @@ def render_complexity() -> None:
         f.update_layout(title="Population vs. fitted logistic curve", xaxis_title="tick",
                         yaxis_title="agents")
         st.plotly_chart(_small(f, 330), width="stretch")
+
+    st.markdown("#### Population viability analysis")
+    c = st.columns(3)
+    risk = an.quasi_extinction_risk(pop_series, threshold=float(POP_FLOOR))
+    c[0].metric(f"Quasi-extinction risk (<{POP_FLOOR})", _fmt(risk, 4),
+                help="Diffusion-approximation probability of dropping below the floor within "
+                     "100 ticks, from the mean and variance of log growth")
+    c[1].metric("Mean log-growth", _fmt(an.instantaneous_growth_rate(pop_series, window=len(pop_series)), 5))
+    c[2].metric("Benford deviation", _fmt(an.benford_deviation(pop_series), 4),
+                help="Leading-digit deviation from Benford's law; low means Benford-like")
 
     st.markdown("#### Autocorrelation & spectrum")
     a, b = st.columns(2)
@@ -1429,6 +1488,14 @@ def render_ecology() -> None:
     c[4].metric("Berger-Parker", _fmt(an.berger_parker(role_counts)),
                 help="Share held by the single most abundant caste")
 
+    c = st.columns(5)
+    c[0].metric("Chao1 estimator", _fmt(an.chao1_estimator(role_counts), 2),
+                help="Lower-bound estimate of TRUE richness including unobserved types")
+    c[1].metric("Margalef richness", _fmt(an.margalef_richness(role_counts)))
+    c[2].metric("Menhinick richness", _fmt(an.menhinick_richness(role_counts)))
+    c[3].metric("Rényi entropy (q=2)", _fmt(an.renyi_entropy(role_counts, 2.0)))
+    c[4].metric("Tsallis entropy (q=2)", _fmt(an.tsallis_entropy(role_counts, 2.0)))
+
     st.markdown("#### Hill number spectrum")
     st.caption("Hill (1973) numbers unify the diversity family: q=0 is richness, q→1 is "
                "exp(Shannon), q=2 is inverse Simpson. The curve's steepness shows how much "
@@ -1450,6 +1517,15 @@ def render_ecology() -> None:
     c[1].metric("Gini (discoveries)", _fmt(an.gini_coefficient(discoveries)))
     c[2].metric("Gini (tokens)", _fmt(an.gini_coefficient(tokens)))
     c[3].metric("Theil index (energy)", _fmt(an.theil_index(energies)))
+
+    c = st.columns(4)
+    c[0].metric("Atkinson (ε=0.5)", _fmt(an.atkinson_index(energies)),
+                help="Inequality with explicit aversion to inequality")
+    c[1].metric("Hoover index", _fmt(an.hoover_index(energies)),
+                help="Share of total energy that would need redistributing for equality")
+    c[2].metric("Palma ratio", _fmt(an.palma_ratio(energies)),
+                help="Top 10% share divided by bottom 40% share")
+    c[3].metric("HHI concentration", _fmt(an.herfindahl_index(energies), 4))
 
     a, b = st.columns(2)
     with a:
@@ -1492,6 +1568,16 @@ def render_ecology() -> None:
                 help="Zero under complete spatial randomness; positive means clustering at that scale")
     c[3].metric("Moran's I (resources)", _fmt(an.morans_i(world.resource_grid.sum(axis=2))),
                 help="Spatial autocorrelation: +1 clustered, 0 random, −1 checkerboard")
+
+    c = st.columns(4)
+    c[0].metric("Geary's C (resources)", _fmt(an.gearys_c(world.resource_grid.sum(axis=2))),
+                help="Complements Moran's I: <1 clustered, 1 random, >1 dispersed")
+    c[1].metric("Radius of gyration", _fmt(an.radius_of_gyration(xs, ys), 2),
+                help="RMS distance of agents from their centroid")
+    ps = an.patch_statistics(world.resource_grid.sum(axis=2) > np.percentile(world.resource_grid.sum(axis=2), 60))
+    c[2].metric("Resource patches", _fmt(ps["n_patches"], 0))
+    c[3].metric("Largest patch index", _fmt(ps["largest_patch_index"], 4),
+                help="Largest contiguous patch as a fraction of the world")
 
     st.markdown("#### Ripley's L across scales")
     radii = np.arange(2, 25, 2, dtype=float)
@@ -1539,6 +1625,12 @@ def render_ecology() -> None:
                     help="Rate at which mortality accelerates with age")
         c[3].metric("Makeham λ (accident)", _fmt(gm["lambda"], 4),
                     help="Age-independent baseline mortality")
+        c2 = st.columns(3)
+        c2[0].metric("Survivorship type", an.survivorship_curve_type(ages),
+                     help="Classified by the coefficient of variation: a constant-hazard "
+                          "(Type II) process is exponential, which has CV exactly 1")
+        c2[1].metric("Lifespan CV", _fmt(an.coefficient_of_variation(ages)))
+        c2[2].metric("Lifespan Gini", _fmt(an.gini_coefficient(ages)))
         if times.size > 1:
             f = go.Figure([go.Scatter(x=times, y=surv, line=dict(color="#ed8936", shape="hv"))])
             f.add_hline(y=0.5, line_dash="dot", line_color="#888", annotation_text="median")
@@ -1569,7 +1661,7 @@ def render_spectra() -> None:
         _, lam = p.hrc._eig()
         prs.append(an.participation_ratio(p.hrc.psi))
         ipr.append(an.inverse_participation_ratio(p.hrc.psi))
-        vns.append(an.von_neumann_entropy(np.abs(p.hrc.psi) ** 2))
+        vns.append(an.measurement_entropy(p.hrc.psi))
         gaps.append(an.spectral_gap(lam))
         lsrs.append(an.level_spacing_ratio(lam))
         eranks.append(an.matrix_effective_rank(p.hrc.H))
@@ -1579,14 +1671,20 @@ def render_spectra() -> None:
     c[0].metric("Mean participation ratio", _fmt(float(np.nanmean(prs)), 2),
                 help="How many of the 64 cognitive modes a state actually occupies. "
                      "1 = fully localised, 64 = uniformly spread")
-    c[1].metric("Mean von Neumann entropy", _fmt(float(np.nanmean(vns))))
+    c[1].metric("Mean measurement entropy", _fmt(float(np.nanmean(vns))),
+                help="Shannon entropy of the Born probabilities in the eigenbasis. NOT the von "
+                     "Neumann entropy, which is identically 0 for any pure state — an earlier "
+                     "build mislabelled this.")
     c[2].metric("Mean level-spacing ⟨r⟩", _fmt(float(np.nanmean(lsrs))),
-                help="≈0.386 Poisson/integrable, ≈0.536 GOE/quantum-chaotic")
+                help="Random-matrix diagnostic. Poisson/integrable ≈0.386; GUE (complex Hermitian, "
+                     "which is what these Hamiltonians are) ≈0.5996. GOE's 0.5307 is the wrong "
+                     "reference here and an earlier build cited it.")
     c[3].metric("Mean effective rank", _fmt(float(np.nanmean(eranks)), 2),
                 help="Soft rank of the Hamiltonian via singular-value entropy")
 
-    st.caption(f"The population's mean ⟨r⟩ of {_fmt(float(np.nanmean(lsrs)))} sits between the "
-               f"Poisson (0.386) and GOE (0.536) reference values — this is a descriptive "
+    st.caption(f"The population's mean ⟨r⟩ of {_fmt(float(np.nanmean(lsrs)))} is read against "
+               f"Poisson 0.386 (integrable) and GUE 0.5996 — GUE, not GOE, is the correct "
+               f"reference because these Hamiltonians are complex Hermitian. This is a descriptive "
                f"diagnostic of spectral structure, not a claim about physical quantum chaos.")
 
     a, b = st.columns(2)
@@ -1599,7 +1697,7 @@ def render_spectra() -> None:
         f = px.histogram(x=[v for v in lsrs if np.isfinite(v)], nbins=22,
                          color_discrete_sequence=["#9f7aea"])
         f.add_vline(x=0.386, line_dash="dot", line_color="#63b3ed", annotation_text="Poisson")
-        f.add_vline(x=0.536, line_dash="dot", line_color="#ed8936", annotation_text="GOE")
+        f.add_vline(x=0.5996, line_dash="dot", line_color="#ed8936", annotation_text="GUE")
         f.update_layout(title="Level-spacing ratio distribution", xaxis_title="⟨r⟩", yaxis_title=None)
         st.plotly_chart(_small(f, 290), width="stretch")
 
@@ -1607,13 +1705,52 @@ def render_spectra() -> None:
     with a:
         f = px.histogram(x=[v for v in vns if np.isfinite(v)], nbins=22,
                          color_discrete_sequence=["#f6ad55"])
-        f.update_layout(title="von Neumann entropy of ψ", xaxis_title="S", yaxis_title=None)
+        f.update_layout(title="Measurement entropy of ψ (Born-probability Shannon entropy)",
+                        xaxis_title="S", yaxis_title=None)
         st.plotly_chart(_small(f, 290), width="stretch")
     with b:
         f = px.histogram(x=[v for v in eranks if np.isfinite(v)], nbins=22,
                          color_discrete_sequence=["#48bb78"])
         f.update_layout(title="Hamiltonian effective rank", xaxis_title="rank", yaxis_title=None)
         st.plotly_chart(_small(f, 290), width="stretch")
+
+    st.markdown("#### Quantum-information diagnostics")
+    pur = [an.purity(p.hrc.psi) for p in sample]
+    coh = [an.l1_coherence(p.hrc.psi) for p in sample]
+    fro = [an.frobenius_norm(p.hrc.H) for p in sample]
+    cond = [an.condition_number(p.hrc.H) for p in sample]
+    deloc = [an.eigenvector_delocalisation(p.hrc.H) for p in sample[:20]]
+    c = st.columns(5)
+    c[0].metric("Mean purity Tr(ρ²)", _fmt(float(np.nanmean(pur)), 4),
+                help="1 = the state sits entirely on one mode; 1/64 = maximally spread")
+    c[1].metric("Mean l₁ coherence", _fmt(float(np.nanmean(coh)), 2),
+                help="Baumgratz et al. coherence measure: 0 for a basis state")
+    c[2].metric("Mean ‖H‖_F", _fmt(float(np.nanmean(fro)), 2))
+    c[3].metric("Mean condition number", _fmt(float(np.nanmean(cond)), 1))
+    c[4].metric("Eigenvector delocalisation", _fmt(float(np.nanmean(deloc)), 2),
+                help="Mean participation ratio across all eigenvectors")
+
+    if len(sample) >= 2:
+        fids = [an.state_fidelity(sample[i].hrc.psi, sample[i + 1].hrc.psi)
+                for i in range(len(sample) - 1)]
+        comms = [an.commutator_norm(sample[i].hrc.H, sample[i + 1].hrc.H)
+                 for i in range(min(len(sample) - 1, 25))]
+        a, b = st.columns(2)
+        with a:
+            f = px.histogram(x=[v for v in fids if np.isfinite(v)], nbins=22,
+                             color_discrete_sequence=["#4fd1c5"])
+            f.update_layout(title="Pairwise state fidelity |⟨ψᵢ|ψⱼ⟩|²", xaxis_title="fidelity",
+                            yaxis_title=None)
+            st.plotly_chart(_small(f, 280), width="stretch")
+        with b:
+            f = px.histogram(x=[v for v in comms if np.isfinite(v)], nbins=20,
+                             color_discrete_sequence=["#ed8936"])
+            f.update_layout(title="Commutator norm ‖[Hᵢ,Hⱼ]‖_F between agents",
+                            xaxis_title="‖[H,H']‖", yaxis_title=None)
+            st.plotly_chart(_small(f, 280), width="stretch")
+        st.caption("A non-zero commutator norm means two agents' Hamiltonians do not share an "
+                   "eigenbasis — a concrete measure of how differently they are organised "
+                   "cognitively, independent of their eigenvalue spectra.")
 
     st.markdown("#### Aggregate eigenvalue density across the population")
     all_lam = np.concatenate([p.hrc._eig()[1] for p in sample])
