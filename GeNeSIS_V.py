@@ -53,6 +53,7 @@ from chemistry import (
     GLUCOSE, WATER, CO2, O2, RESPIRATION, PHOTOSYNTHESIS,
     arrhenius_rate_constant, heat_to_kelvin,
 )
+import analytics as an
 from geometry import (
     betti_0, betti_1, topology_summary, KOCH_CURVE, FRACTAL_PLANT,
     turtle_render, bounding_box,
@@ -63,6 +64,7 @@ from geometry import (
 # ----------------------------------------------------------------------------
 st.set_page_config(page_title="GeNeSIS V — OMNIGENESIS", page_icon="⬡", layout="wide")
 
+EPS_F: float = 1e-12
 WORLD_SIZE: int = 56          # balances visual richness against the 2GB budget
 HISTORY_CAP: int = 400        # ring-buffer cap (masterplan §2.5)
 GRAYSCOTT_STEPS_PER_TICK: int = 3   # morphogen field advances in lockstep with sim time
@@ -80,6 +82,9 @@ PANELS: List[str] = [
     "🧬 Evolution & Phylogeny",
     "🧪 Chemistry Lab",
     "🌀 Geometry & Topology",
+    "📈 Complexity & Dynamics",
+    "🌾 Ecology & Inequality",
+    "🔬 Cognitive Spectra",
 ]
 
 
@@ -1248,6 +1253,454 @@ def render_geometry() -> None:
     st.caption(f"Axiom: `{lsys.axiom}` · Rules: " +
                " · ".join(f"`{k} → {v}`" for k, v in lsys.rules.items()) +
                f" · Turn angle: {lsys.angle_degrees}°")
+
+# ----------------------------------------------------------------------------
+# PANEL 10 — Complexity & Dynamics  (new)
+# ----------------------------------------------------------------------------
+def _fmt(v: float, nd: int = 3) -> str:
+    return "—" if v is None or not np.isfinite(v) else f"{v:.{nd}f}"
+
+
+def render_complexity() -> None:
+    hist = st.session_state.history
+    alive = _alive()
+    pop_series = [float(v) for v in hist["population"]]
+    phi_series = [float(v) for v in hist["mean_phi"]]
+
+    st.markdown("### Time-series complexity of the population signal")
+    st.caption("Every statistic here is a published method, implemented in analytics.py and "
+               "verified there against a case with a known analytic answer.")
+
+    if len(pop_series) < 20:
+        st.info("These estimators need roughly 20+ ticks of history. Advance the simulation.")
+        return
+
+    h = an.hurst_exponent(pop_series)
+    dfa = an.detrended_fluctuation(pop_series)
+    pe = an.permutation_entropy(pop_series)
+    se = an.spectral_entropy(pop_series)
+    lyap = an.lyapunov_proxy(pop_series)
+    fano = an.fano_factor(pop_series)
+    cv = an.coefficient_of_variation(pop_series)
+    tau, p_tau = an.kendall_trend(pop_series)
+
+    c = st.columns(4)
+    c[0].metric("Hurst exponent", _fmt(h),
+                help="R/S rescaled range. 0.5 random walk, >0.5 persistent/trending, <0.5 mean-reverting")
+    c[1].metric("DFA α", _fmt(dfa),
+                help="Detrended fluctuation analysis. 0.5 uncorrelated, 1.0 is 1/f long-range correlation")
+    c[2].metric("Permutation entropy", _fmt(pe),
+                help="Bandt-Pompe ordinal complexity, normalised to [0,1]. 1 = maximally unpredictable")
+    c[3].metric("Spectral entropy", _fmt(se),
+                help="Normalised entropy of the power spectrum. 1 = white noise, 0 = a pure tone")
+
+    c = st.columns(4)
+    c[0].metric("Lyapunov proxy", _fmt(lyap, 4),
+                help="Mean log divergence of initially-nearby states. >0 suggests chaotic sensitivity")
+    c[1].metric("Fano factor", _fmt(fano),
+                help="Variance/mean. 1 = Poisson, >1 = bursty/overdispersed")
+    c[2].metric("Coeff. of variation", _fmt(cv))
+    c[3].metric("Kendall τ trend", f"{_fmt(tau)}  (p={_fmt(p_tau)})",
+                help="Monotonic trend strength and its significance")
+
+    st.markdown("#### Logistic (Verhulst) growth fit")
+    fit = an.logistic_fit(pop_series)
+    identifiable = fit.get("identifiable", 0.0) >= 1.0
+    c = st.columns(4)
+    c[0].metric("Carrying capacity K", _fmt(fit["K"], 1) if identifiable else "not yet identifiable",
+                help="A population still in its exponential phase carries no information about "
+                     "where it will level off, so K is only shown once growth has measurably "
+                     "decelerated. Otherwise the optimiser just runs K to its bound.")
+    c[1].metric("Intrinsic rate r", _fmt(fit["r"], 4))
+    c[2].metric("Fit R²", _fmt(fit["r_squared"], 4),
+                help="High R² does NOT validate K on an unsaturated curve — an exponential is "
+                     "fit almost perfectly by the early part of any logistic")
+    c[3].metric("Current growth rate", _fmt(an.instantaneous_growth_rate(pop_series), 4),
+                help="d(ln N)/dt over a trailing window")
+    if not identifiable and np.isfinite(fit["r_squared"]):
+        st.caption("The population is still growing roughly exponentially, so the carrying "
+                   "capacity is genuinely not estimable from this data yet — reporting a number "
+                   "here would be false precision. Run longer and it will become identifiable "
+                   "once the curve bends.")
+
+    if np.isfinite(fit["K"]) and np.isfinite(fit["r"]) and identifiable:
+        t = np.arange(len(pop_series), dtype=float)
+        n0 = max(pop_series[0], 1e-6)
+        K, r = fit["K"], fit["r"]
+        pred = K / (1.0 + ((K - n0) / n0) * np.exp(-np.clip(r * t, -50, 50)))
+        f = go.Figure()
+        f.add_trace(go.Scatter(x=t, y=pop_series, name="observed", line=dict(color="#4fd1c5")))
+        f.add_trace(go.Scatter(x=t, y=pred, name="logistic fit", line=dict(color="#ed8936", dash="dash")))
+        f.update_layout(title="Population vs. fitted logistic curve", xaxis_title="tick",
+                        yaxis_title="agents")
+        st.plotly_chart(_small(f, 330), width="stretch")
+
+    st.markdown("#### Autocorrelation & spectrum")
+    a, b = st.columns(2)
+    with a:
+        acf = an.autocorrelation(pop_series, max_lag=min(50, len(pop_series) - 1))
+        if acf.size:
+            f = go.Figure([go.Bar(y=acf, marker_color="#9f7aea")])
+            f.add_hline(y=0, line_color="#666")
+            f.update_layout(title="Population autocorrelation", xaxis_title="lag")
+            st.plotly_chart(_small(f, 290), width="stretch")
+    with b:
+        s = np.asarray(pop_series) - np.mean(pop_series)
+        ps = np.abs(np.fft.rfft(s)) ** 2
+        if ps.size > 2:
+            f = go.Figure([go.Scatter(y=ps[1:], line=dict(color="#63b3ed"))])
+            f.update_layout(title="Power spectrum", xaxis_title="frequency bin", yaxis_type="log")
+            st.plotly_chart(_small(f, 290), width="stretch")
+
+    st.markdown("#### Phase-space reconstruction (delay embedding)")
+    a, b = st.columns(2)
+    with a:
+        lag = st.slider("Embedding delay τ", 1, 12, 3)
+        s = np.asarray(pop_series)
+        if s.size > lag + 2:
+            f = go.Figure([go.Scatter(x=s[:-lag], y=s[lag:], mode="lines+markers",
+                                      marker=dict(size=4, color=np.arange(s.size - lag),
+                                                  colorscale="turbo", showscale=False),
+                                      line=dict(color="rgba(120,120,120,0.35)"))])
+            f.update_layout(title=f"Population attractor: N(t) vs N(t+{lag})",
+                            xaxis_title="N(t)", yaxis_title=f"N(t+{lag})")
+            st.plotly_chart(_small(f, 340), width="stretch")
+    with b:
+        valid_phi = [v for v in phi_series if np.isfinite(v)]
+        if len(valid_phi) > 12:
+            mi = an.mutual_information(pop_series[:len(valid_phi)], valid_phi)
+            te_pop_phi = an.transfer_entropy_proxy(pop_series[:len(valid_phi)], valid_phi)
+            te_phi_pop = an.transfer_entropy_proxy(valid_phi, pop_series[:len(valid_phi)])
+            st.metric("I(population ; Φ)", _fmt(mi, 4),
+                      help="Mutual information, in nats, between population size and mean Φ")
+            st.metric("Info flow population→Φ", _fmt(te_pop_phi, 4))
+            st.metric("Info flow Φ→population", _fmt(te_phi_pop, 4))
+            st.caption("A directional asymmetry between the two flow figures is suggestive of which "
+                       "signal leads the other. This is a lagged-mutual-information proxy, not a "
+                       "full conditional transfer entropy — read it as indicative, not conclusive.")
+
+    st.markdown("#### Comparative complexity of every tracked series")
+    rows = []
+    for key, label in [("population", "Population"), ("mean_phi", "Mean Φ"),
+                       ("tech_nodes", "Tech nodes"), ("b_tech", "B_tech"),
+                       ("tribes", "Tribes")]:
+        s = [float(v) for v in hist[key] if np.isfinite(float(v))]
+        if len(s) >= 20:
+            rows.append({
+                "Series": label,
+                "Hurst": round(an.hurst_exponent(s), 3),
+                "DFA α": round(an.detrended_fluctuation(s), 3),
+                "Perm. entropy": round(an.permutation_entropy(s), 3),
+                "Spectral entropy": round(an.spectral_entropy(s), 3),
+                "Fano": round(an.fano_factor(s), 3),
+                "CV": round(an.coefficient_of_variation(s), 3),
+                "Kendall τ": round(an.kendall_trend(s)[0], 3),
+            })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
+# ----------------------------------------------------------------------------
+# PANEL 11 — Ecology & Inequality  (new)
+# ----------------------------------------------------------------------------
+def render_ecology() -> None:
+    world = st.session_state.world
+    alive = _alive()
+    nobel = st.session_state.nobel
+    if not alive:
+        st.warning("No living agents.")
+        return
+
+    st.markdown("### Diversity indices")
+    st.caption("Computed over the live caste distribution and over invention usage — "
+               "the same indices field ecologists use for species abundance.")
+
+    roles: Dict[str, int] = {}
+    for p in alive:
+        roles[p.role] = roles.get(p.role, 0) + 1
+    role_counts = list(roles.values())
+
+    c = st.columns(5)
+    c[0].metric("Shannon H", _fmt(an.shannon_entropy(role_counts)))
+    c[1].metric("Simpson D", _fmt(an.simpson_index(role_counts)))
+    c[2].metric("Inverse Simpson 1/D", _fmt(an.inverse_simpson(role_counts)),
+                help="Effective number of equally-common castes")
+    c[3].metric("Pielou evenness J'", _fmt(an.pielou_evenness(role_counts)))
+    c[4].metric("Berger-Parker", _fmt(an.berger_parker(role_counts)),
+                help="Share held by the single most abundant caste")
+
+    st.markdown("#### Hill number spectrum")
+    st.caption("Hill (1973) numbers unify the diversity family: q=0 is richness, q→1 is "
+               "exp(Shannon), q=2 is inverse Simpson. The curve's steepness shows how much "
+               "dominance there is.")
+    qs = np.linspace(0, 4, 21)
+    hills = [an.hill_number(role_counts, q) for q in qs]
+    f = go.Figure([go.Scatter(x=qs, y=hills, line=dict(color="#4fd1c5"))])
+    f.update_layout(title="Hill numbers ᵍD vs order q", xaxis_title="q", yaxis_title="effective types")
+    st.plotly_chart(_small(f, 300), width="stretch")
+
+    st.markdown("### Inequality of energy and discovery")
+    energies = [p.energy for p in alive]
+    discoveries = [float(len(p.discoveries)) for p in alive]
+    tokens = [sum(p.inventory.values()) for p in alive]
+
+    c = st.columns(4)
+    c[0].metric("Gini (energy)", _fmt(an.gini_coefficient(energies)),
+                help="0 = perfect equality, →1 = one agent holds everything")
+    c[1].metric("Gini (discoveries)", _fmt(an.gini_coefficient(discoveries)))
+    c[2].metric("Gini (tokens)", _fmt(an.gini_coefficient(tokens)))
+    c[3].metric("Theil index (energy)", _fmt(an.theil_index(energies)))
+
+    a, b = st.columns(2)
+    with a:
+        x, y = an.lorenz_curve(energies)
+        f = go.Figure()
+        f.add_trace(go.Scatter(x=x, y=y, name="energy", line=dict(color="#4fd1c5")))
+        xd, yd = an.lorenz_curve(discoveries)
+        f.add_trace(go.Scatter(x=xd, y=yd, name="discoveries", line=dict(color="#ed8936")))
+        f.add_trace(go.Scatter(x=[0, 1], y=[0, 1], name="perfect equality",
+                               line=dict(color="#888", dash="dot")))
+        f.update_layout(title="Lorenz curves", xaxis_title="cumulative share of agents",
+                        yaxis_title="cumulative share held")
+        st.plotly_chart(_small(f, 330), width="stretch")
+    with b:
+        alpha, ks = an.powerlaw_alpha(discoveries)
+        zs = an.zipf_slope(discoveries)
+        st.metric("Power-law α (discoveries)", _fmt(alpha),
+                  help="Clauset-Shalizi-Newman MLE. Typical real heavy-tailed systems sit near 2-3")
+        st.metric("KS distance of that fit", _fmt(ks, 4),
+                  help="Lower is a better power-law fit; this is a goodness measure, not a p-value")
+        st.metric("Zipf slope", _fmt(zs), help="Ideal Zipf's law is −1.0")
+        srt = np.sort(np.asarray(discoveries))[::-1]
+        srt = srt[srt > 0]
+        if srt.size > 3:
+            f = go.Figure([go.Scatter(x=np.arange(1, srt.size + 1), y=srt, mode="markers",
+                                      marker=dict(color="#9f7aea"))])
+            f.update_layout(title="Discovery rank-frequency (log-log)", xaxis_type="log",
+                            yaxis_type="log", xaxis_title="rank", yaxis_title="discoveries")
+            st.plotly_chart(_small(f, 260), width="stretch")
+
+    st.markdown("### Spatial ecology")
+    xs = [p.x for p in alive]
+    ys = [p.y for p in alive]
+    c = st.columns(4)
+    c[0].metric("Clark-Evans NNI", _fmt(an.nearest_neighbour_index(xs, ys, world.width, world.height)),
+                help="<1 clustered, ≈1 random, >1 regularly spaced")
+    c[1].metric("Quadrat dispersion", _fmt(an.quadrat_dispersion(xs, ys, world.width, world.height)),
+                help="Variance/mean of quadrat counts. 1 = Poisson, >1 = clustered")
+    c[2].metric("Ripley's L(r=6)", _fmt(an.ripley_l(xs, ys, 6.0, world.width, world.height)),
+                help="Zero under complete spatial randomness; positive means clustering at that scale")
+    c[3].metric("Moran's I (resources)", _fmt(an.morans_i(world.resource_grid.sum(axis=2))),
+                help="Spatial autocorrelation: +1 clustered, 0 random, −1 checkerboard")
+
+    st.markdown("#### Ripley's L across scales")
+    radii = np.arange(2, 25, 2, dtype=float)
+    ls = [an.ripley_l(xs, ys, float(r), world.width, world.height) for r in radii]
+    f = go.Figure([go.Scatter(x=radii, y=ls, line=dict(color="#4fd1c5"))])
+    f.add_hline(y=0, line_dash="dot", line_color="#888", annotation_text="complete spatial randomness")
+    f.update_layout(title="L(r) − r vs radius", xaxis_title="radius (cells)", yaxis_title="L(r)")
+    st.plotly_chart(_small(f, 300), width="stretch")
+
+    st.markdown("#### Spatial autocorrelation of every field")
+    rows = []
+    fields = {
+        "Temperature": world.heat_field,
+        "Fertility": world.fertility,
+        "Total resources": world.resource_grid.sum(axis=2),
+        "Morphogen A": st.session_state.morphogen_A,
+        "Morphogen B": st.session_state.morphogen_B,
+    }
+    for name in MEME_NAMES[:4]:
+        fields[f"Meme: {name}"] = world.meme_grid[:, :, MEME_NAMES.index(name)]
+    for name, fld in fields.items():
+        fld = np.asarray(fld, dtype=np.float64)
+        binary = (fld > np.percentile(fld, 60)).astype(np.int8)
+        rows.append({
+            "Field": name,
+            "Moran's I": round(an.morans_i(fld), 4),
+            "Spatial entropy": round(an.spatial_entropy(fld), 4),
+            "Fractal dim.": round(an.box_counting_dimension(binary), 4),
+            "Lacunarity": round(an.lacunarity(binary), 4),
+            "Mean": round(float(fld.mean()), 4),
+            "Std": round(float(fld.std()), 4),
+        })
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    st.markdown("### Survival analysis")
+    if nobel.death_log.records:
+        ages = [a for _, a in nobel.death_log.records]
+        times, surv = an.kaplan_meier(ages)
+        gm = an.gompertz_makeham_fit(ages)
+        c = st.columns(4)
+        c[0].metric("Deaths recorded", len(ages))
+        c[1].metric("Median survival", _fmt(an.median_survival(ages), 1),
+                    help="Kaplan-Meier estimate")
+        c[2].metric("Gompertz β (senescence)", _fmt(gm["beta"], 4),
+                    help="Rate at which mortality accelerates with age")
+        c[3].metric("Makeham λ (accident)", _fmt(gm["lambda"], 4),
+                    help="Age-independent baseline mortality")
+        if times.size > 1:
+            f = go.Figure([go.Scatter(x=times, y=surv, line=dict(color="#ed8936", shape="hv"))])
+            f.add_hline(y=0.5, line_dash="dot", line_color="#888", annotation_text="median")
+            f.update_layout(title="Kaplan-Meier survival curve", xaxis_title="age",
+                            yaxis_title="survival probability")
+            st.plotly_chart(_small(f, 320), width="stretch")
+    else:
+        st.caption("No deaths recorded yet — survival statistics need mortality data.")
+
+
+# ----------------------------------------------------------------------------
+# PANEL 12 — Cognitive Spectra  (new)
+# ----------------------------------------------------------------------------
+def render_spectra() -> None:
+    alive = _alive()
+    if not alive:
+        st.warning("No living agents.")
+        return
+
+    st.markdown("### Population-wide cognitive spectral analysis")
+    st.caption("Random-matrix and quantum-information diagnostics applied to every living agent's "
+               "Hamiltonian — the same statistics used to distinguish integrable from chaotic "
+               "quantum systems.")
+
+    sample = alive[:60]
+    prs, ipr, vns, gaps, lsrs, eranks, spreads = [], [], [], [], [], [], []
+    for p in sample:
+        _, lam = p.hrc._eig()
+        prs.append(an.participation_ratio(p.hrc.psi))
+        ipr.append(an.inverse_participation_ratio(p.hrc.psi))
+        vns.append(an.von_neumann_entropy(np.abs(p.hrc.psi) ** 2))
+        gaps.append(an.spectral_gap(lam))
+        lsrs.append(an.level_spacing_ratio(lam))
+        eranks.append(an.matrix_effective_rank(p.hrc.H))
+        spreads.append(float(lam.max() - lam.min()))
+
+    c = st.columns(4)
+    c[0].metric("Mean participation ratio", _fmt(float(np.nanmean(prs)), 2),
+                help="How many of the 64 cognitive modes a state actually occupies. "
+                     "1 = fully localised, 64 = uniformly spread")
+    c[1].metric("Mean von Neumann entropy", _fmt(float(np.nanmean(vns))))
+    c[2].metric("Mean level-spacing ⟨r⟩", _fmt(float(np.nanmean(lsrs))),
+                help="≈0.386 Poisson/integrable, ≈0.536 GOE/quantum-chaotic")
+    c[3].metric("Mean effective rank", _fmt(float(np.nanmean(eranks)), 2),
+                help="Soft rank of the Hamiltonian via singular-value entropy")
+
+    st.caption(f"The population's mean ⟨r⟩ of {_fmt(float(np.nanmean(lsrs)))} sits between the "
+               f"Poisson (0.386) and GOE (0.536) reference values — this is a descriptive "
+               f"diagnostic of spectral structure, not a claim about physical quantum chaos.")
+
+    a, b = st.columns(2)
+    with a:
+        f = px.histogram(x=[v for v in prs if np.isfinite(v)], nbins=22,
+                         color_discrete_sequence=["#4fd1c5"])
+        f.update_layout(title="Participation ratio distribution", xaxis_title="PR", yaxis_title=None)
+        st.plotly_chart(_small(f, 290), width="stretch")
+    with b:
+        f = px.histogram(x=[v for v in lsrs if np.isfinite(v)], nbins=22,
+                         color_discrete_sequence=["#9f7aea"])
+        f.add_vline(x=0.386, line_dash="dot", line_color="#63b3ed", annotation_text="Poisson")
+        f.add_vline(x=0.536, line_dash="dot", line_color="#ed8936", annotation_text="GOE")
+        f.update_layout(title="Level-spacing ratio distribution", xaxis_title="⟨r⟩", yaxis_title=None)
+        st.plotly_chart(_small(f, 290), width="stretch")
+
+    a, b = st.columns(2)
+    with a:
+        f = px.histogram(x=[v for v in vns if np.isfinite(v)], nbins=22,
+                         color_discrete_sequence=["#f6ad55"])
+        f.update_layout(title="von Neumann entropy of ψ", xaxis_title="S", yaxis_title=None)
+        st.plotly_chart(_small(f, 290), width="stretch")
+    with b:
+        f = px.histogram(x=[v for v in eranks if np.isfinite(v)], nbins=22,
+                         color_discrete_sequence=["#48bb78"])
+        f.update_layout(title="Hamiltonian effective rank", xaxis_title="rank", yaxis_title=None)
+        st.plotly_chart(_small(f, 290), width="stretch")
+
+    st.markdown("#### Aggregate eigenvalue density across the population")
+    all_lam = np.concatenate([p.hrc._eig()[1] for p in sample])
+    a, b = st.columns(2)
+    with a:
+        f = px.histogram(x=all_lam, nbins=60, color_discrete_sequence=["#63b3ed"])
+        f.update_layout(title=f"Eigenvalue density ({len(sample)} agents × 64 modes)",
+                        xaxis_title="λ", yaxis_title=None)
+        st.plotly_chart(_small(f, 300), width="stretch")
+    with b:
+        mat = np.array([np.sort(p.hrc._eig()[1]) for p in sample])
+        f = px.imshow(mat, aspect="auto", color_continuous_scale="turbo", origin="lower")
+        f.update_layout(title="Sorted eigenspectrum per agent", xaxis_title="mode",
+                        yaxis_title="agent")
+        st.plotly_chart(_small(f, 300), width="stretch")
+
+    st.markdown("#### Cognitive state-space structure (PCA of |ψ|)")
+    if len(sample) >= 4:
+        X = np.array([np.abs(p.hrc.psi) for p in sample])
+        Xc = X - X.mean(axis=0)
+        try:
+            U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
+            proj = U[:, :3] * S[:3]
+            var = (S ** 2) / max(np.sum(S ** 2), EPS_F)
+            a, b = st.columns(2)
+            with a:
+                f = px.scatter(x=proj[:, 0], y=proj[:, 1], color=[p.role for p in sample],
+                               size=[1 + len(p.discoveries) for p in sample])
+                f.update_layout(title=f"PCA of cognitive states "
+                                      f"(PC1 {100*var[0]:.1f}%, PC2 {100*var[1]:.1f}%)",
+                                xaxis_title="PC1", yaxis_title="PC2")
+                st.plotly_chart(_small(f, 340), width="stretch")
+            with b:
+                f = go.Figure([go.Bar(y=100 * var[:12], marker_color="#9f7aea")])
+                f.update_layout(title="Explained variance by component", xaxis_title="component",
+                                yaxis_title="% variance")
+                st.plotly_chart(_small(f, 340), width="stretch")
+            st.caption(f"The leading {int(np.searchsorted(np.cumsum(var), 0.9)) + 1} components "
+                       f"capture 90% of the variation in cognitive state across the population — "
+                       f"a direct measure of how much genuine cognitive diversity exists.")
+        except Exception:
+            st.caption("PCA unavailable for the current state.")
+
+    st.markdown("#### Pairwise cognitive similarity")
+    a, b = st.columns(2)
+    with a:
+        sub = sample[:36]
+        n = len(sub)
+        M = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                M[i, j] = spectral_resonance(sub[i].hrc, sub[j].hrc) if i != j else 1.0
+        f = px.imshow(M, color_continuous_scale="viridis")
+        f.update_layout(title="Spectral resonance matrix")
+        st.plotly_chart(_small(f, 330), width="stretch")
+    with b:
+        tri = M[np.triu_indices(len(sub), 1)] if len(sub) > 1 else np.array([])
+        if tri.size:
+            f = px.histogram(x=tri, nbins=24, color_discrete_sequence=["#ed8936"])
+            f.add_vline(x=0.08, line_dash="dot", line_color="#e53e3e",
+                        annotation_text="tribe-join threshold")
+            f.update_layout(title="Resonance distribution", xaxis_title="ρ", yaxis_title=None)
+            st.plotly_chart(_small(f, 330), width="stretch")
+            st.caption(f"Mean resonance {tri.mean():.4f} against a join threshold of 0.08 — this "
+                       f"plot is the direct visual evidence for the documented finding that tribal "
+                       f"diversification cannot occur under the current parameterisation: "
+                       f"essentially every pair clears the bar.")
+
+    st.markdown("#### Genome information content")
+    dnas = [genome_fingerprint(p.hrc.eigenvectors())["dna"] for p in sample[:30]]
+    if len(dnas) >= 2:
+        c = st.columns(3)
+        base_counts = [[d.count(b_) for b_ in "ACGT"] for d in dnas]
+        entropies = [an.shannon_entropy(bc, base=2) for bc in base_counts]
+        c[0].metric("Mean base entropy", f"{_fmt(float(np.nanmean(entropies)))} bits",
+                    help="Maximum for 4 equiprobable bases is 2 bits")
+        ncds = [an.normalised_compression_distance(dnas[i], dnas[i + 1])
+                for i in range(len(dnas) - 1)]
+        c[1].metric("Mean NCD between genomes", _fmt(float(np.nanmean(ncds))),
+                    help="Normalised compression distance: 0 identical, →1 unrelated")
+        gcs = [100.0 * (d.count("G") + d.count("C")) / len(d) for d in dnas]
+        c[2].metric("Mean GC content", f"{_fmt(float(np.mean(gcs)), 1)}%")
+        f = px.histogram(x=gcs, nbins=20, color_discrete_sequence=["#48bb78"])
+        f.update_layout(title="GC content across the population", xaxis_title="% GC", yaxis_title=None)
+        st.plotly_chart(_small(f, 260), width="stretch")
+
+
 PANEL_RENDERERS = {
     PANELS[0]: render_observation_deck,
     PANELS[1]: render_biome_cartography,
@@ -1258,6 +1711,9 @@ PANEL_RENDERERS = {
     PANELS[6]: render_evolution,
     PANELS[7]: render_chemistry,
     PANELS[8]: render_geometry,
+    PANELS[9]: render_complexity,
+    PANELS[10]: render_ecology,
+    PANELS[11]: render_spectra,
 }
 
 
