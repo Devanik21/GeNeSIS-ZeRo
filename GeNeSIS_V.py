@@ -2013,24 +2013,61 @@ def render_statistical_inference() -> None:
                  help="Robust to non-linearity and outliers, unlike Pearson")
 
     st.markdown("### Distribution comparison: young vs. old agents")
-    ages = np.array([p.age for p in alive])
-    if ages.size >= 10 and np.ptp(ages) > 0:
-        med = float(np.median(ages))
-        young = [p.energy for p in alive if p.age <= med]
-        old = [p.energy for p in alive if p.age > med]
-        if len(young) >= 2 and len(old) >= 2:
-            d_ks, p_ks = an.two_sample_ks(young, old)
-            t_stat, p_t = an.welch_t_test(young, old)
-            c = st.columns(4)
-            c[0].metric("KS statistic", _fmt(d_ks))
-            c[1].metric("KS p-value", _fmt(p_ks, 4))
-            c[2].metric("Welch t", _fmt(t_stat))
-            c[3].metric("Welch p", _fmt(p_t, 4))
-            f = go.Figure()
-            f.add_trace(go.Histogram(x=young, name="younger half", opacity=0.6, marker_color="#4fd1c5"))
-            f.add_trace(go.Histogram(x=old, name="older half", opacity=0.6, marker_color="#ed8936"))
-            f.update_layout(barmode="overlay", title="Energy distribution: younger vs. older agents")
-            st.plotly_chart(_small(f, 300), width="stretch")
+    ages = np.array([float(p.age) for p in alive], dtype=float)
+
+    if ages.size >= 10:
+        # Split by age rank rather than a strict <= median / > median cutoff.
+        # This guarantees two populated cohorts even when many agents share the
+        # same age (a common state immediately after a reproduction wave).
+        order = np.argsort(ages, kind="stable")
+        half = order.size // 2
+        young_agents = [alive[int(i)] for i in order[:half]]
+        old_agents = [alive[int(i)] for i in order[-half:]]
+
+        young = [float(p.energy) for p in young_agents]
+        old = [float(p.energy) for p in old_agents]
+        young_ages = [float(p.age) for p in young_agents]
+        old_ages = [float(p.age) for p in old_agents]
+
+        d_ks, p_ks = an.two_sample_ks(young, old)
+        t_stat, p_t = an.welch_t_test(young, old)
+        c = st.columns(4)
+        c[0].metric("KS statistic", _fmt(d_ks))
+        c[1].metric("KS p-value", _fmt(p_ks, 4))
+        c[2].metric("Welch t", _fmt(t_stat))
+        c[3].metric("Welch p", _fmt(p_t, 4))
+
+        f = go.Figure()
+        f.add_trace(go.Histogram(
+            x=young, name="younger half", opacity=0.6,
+            marker_color="#4fd1c5",
+            hovertemplate="Energy: %{x}<extra>Younger half</extra>",
+        ))
+        f.add_trace(go.Histogram(
+            x=old, name="older half", opacity=0.6,
+            marker_color="#ed8936",
+            hovertemplate="Energy: %{x}<extra>Older half</extra>",
+        ))
+        f.update_layout(
+            barmode="overlay",
+            title="Energy distribution: younger vs. older agents",
+            xaxis_title="Energy",
+            yaxis_title="Agents",
+            legend_title="Age cohort",
+        )
+        st.plotly_chart(_small(f, 320), width="stretch")
+
+        c = st.columns(3)
+        c[0].metric("Younger-half median age", _fmt(float(np.median(young_ages))))
+        c[1].metric("Older-half median age", _fmt(float(np.median(old_ages))))
+        c[2].metric("Age range", f"{_fmt(float(ages.min()))} – {_fmt(float(ages.max()))}")
+
+        st.caption(
+            "Cohorts are defined by age rank (youngest 50% vs. oldest 50%), "
+            "so the comparison remains visible even when many agents have identical ages."
+        )
+    else:
+        st.caption("Need at least 10 living agents for the young-vs-old distribution comparison.")
 
 
 # ----------------------------------------------------------------------------
