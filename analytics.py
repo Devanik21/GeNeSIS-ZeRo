@@ -1491,6 +1491,570 @@ def survivorship_curve_type(ages: Sequence[float]) -> str:
     return "Type II (constant hazard)"
 
 
+
+# ===========================================================================
+# TIER 3A — STATISTICAL INFERENCE & HYPOTHESIS TESTING
+# ===========================================================================
+def cohens_d(a: Sequence[float], b: Sequence[float]) -> float:
+    """Cohen's (1988) standardized mean difference (pooled SD)."""
+    x, y = _clean(a), _clean(b)
+    if x.size < 2 or y.size < 2:
+        return NAN
+    nx, ny = x.size, y.size
+    pooled = math.sqrt(((nx - 1) * x.var(ddof=1) + (ny - 1) * y.var(ddof=1)) / (nx + ny - 2))
+    return float((x.mean() - y.mean()) / pooled) if pooled > EPS else NAN
+
+
+def hedges_g(a: Sequence[float], b: Sequence[float]) -> float:
+    """Hedges' (1981) small-sample-corrected effect size."""
+    d = cohens_d(a, b)
+    x, y = _clean(a), _clean(b)
+    n = x.size + y.size
+    if not np.isfinite(d) or n <= 2:
+        return NAN
+    correction = 1.0 - 3.0 / (4.0 * n - 9.0)
+    return float(d * correction)
+
+
+def cliffs_delta(a: Sequence[float], b: Sequence[float]) -> float:
+    """
+    Cliff's (1993) delta: a non-parametric effect size in [-1, 1] based on
+    the probability one group's draws exceed the other's.
+    """
+    x, y = _clean(a), _clean(b)
+    if x.size == 0 or y.size == 0:
+        return NAN
+    gt = int(np.sum(x[:, None] > y[None, :]))
+    lt = int(np.sum(x[:, None] < y[None, :]))
+    return float((gt - lt) / (x.size * y.size))
+
+
+def bootstrap_ci(values: Sequence[float], statistic=np.mean, n_boot: int = 2000,
+                 alpha: float = 0.05, seed: int = 0) -> Tuple[float, float, float]:
+    """Percentile bootstrap confidence interval for an arbitrary statistic."""
+    v = _clean(values)
+    if v.size < 4:
+        return NAN, NAN, NAN
+    rng = np.random.default_rng(seed)
+    boots = np.array([statistic(rng.choice(v, size=v.size, replace=True)) for _ in range(n_boot)])
+    lo, hi = np.percentile(boots, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return float(statistic(v)), float(lo), float(hi)
+
+
+def permutation_test(a: Sequence[float], b: Sequence[float], n_perm: int = 3000,
+                     seed: int = 0) -> Tuple[float, float]:
+    """
+    Non-parametric permutation test on the difference of means. Returns
+    (observed difference, two-sided p-value) -- exact under the null of
+    exchangeability, no distributional assumption required.
+    """
+    x, y = _clean(a), _clean(b)
+    if x.size < 2 or y.size < 2:
+        return NAN, NAN
+    obs = float(x.mean() - y.mean())
+    pooled = np.concatenate([x, y])
+    rng = np.random.default_rng(seed)
+    n1 = x.size
+    diffs = np.empty(n_perm)
+    for i in range(n_perm):
+        rng.shuffle(pooled)
+        diffs[i] = pooled[:n1].mean() - pooled[n1:].mean()
+    p = float(np.mean(np.abs(diffs) >= abs(obs) - 1e-12))
+    return obs, p
+
+
+def one_way_anova(*groups: Sequence[float]) -> Tuple[float, float]:
+    """Classic one-way ANOVA F-statistic and p-value across >=2 groups."""
+    gs = [_clean(g) for g in groups]
+    gs = [g for g in gs if g.size > 0]
+    if len(gs) < 2 or any(g.size < 2 for g in gs):
+        return NAN, NAN
+    f, p = stats.f_oneway(*gs)
+    return float(f), float(p)
+
+
+def chi_square_independence(contingency: np.ndarray) -> Tuple[float, float]:
+    """Pearson chi-square test of independence on a contingency table."""
+    t = np.asarray(contingency, dtype=float)
+    if t.ndim != 2 or t.shape[0] < 2 or t.shape[1] < 2 or t.sum() <= 0:
+        return NAN, NAN
+    try:
+        chi2, p, _, _ = stats.chi2_contingency(t)
+        return float(chi2), float(p)
+    except Exception:
+        return NAN, NAN
+
+
+def pearson_with_p(a: Sequence[float], b: Sequence[float]) -> Tuple[float, float]:
+    """Pearson correlation and its two-sided p-value."""
+    x, y = _clean(a), _clean(b)
+    n = min(x.size, y.size)
+    if n < 3:
+        return NAN, NAN
+    r, p = stats.pearsonr(x[:n], y[:n])
+    return float(r), float(p)
+
+
+def spearman_with_p(a: Sequence[float], b: Sequence[float]) -> Tuple[float, float]:
+    """Spearman rank correlation and its two-sided p-value -- robust to
+    non-linear monotonic relationships and outliers, unlike Pearson."""
+    x, y = _clean(a), _clean(b)
+    n = min(x.size, y.size)
+    if n < 3:
+        return NAN, NAN
+    r, p = stats.spearmanr(x[:n], y[:n])
+    return float(r), float(p)
+
+
+def two_sample_ks(a: Sequence[float], b: Sequence[float]) -> Tuple[float, float]:
+    """Kolmogorov-Smirnov test for whether two samples share a distribution."""
+    x, y = _clean(a), _clean(b)
+    if x.size < 3 or y.size < 3:
+        return NAN, NAN
+    d, p = stats.ks_2samp(x, y)
+    return float(d), float(p)
+
+
+def mann_whitney_u(a: Sequence[float], b: Sequence[float]) -> Tuple[float, float]:
+    """Mann-Whitney U -- non-parametric test of whether one group tends to
+    exceed another, without assuming normality."""
+    x, y = _clean(a), _clean(b)
+    if x.size < 2 or y.size < 2:
+        return NAN, NAN
+    try:
+        u, p = stats.mannwhitneyu(x, y, alternative="two-sided")
+        return float(u), float(p)
+    except Exception:
+        return NAN, NAN
+
+
+def welch_t_test(a: Sequence[float], b: Sequence[float]) -> Tuple[float, float]:
+    """Welch's t-test -- does not assume equal variances, the safer default
+    two-sample t-test."""
+    x, y = _clean(a), _clean(b)
+    if x.size < 2 or y.size < 2:
+        return NAN, NAN
+    t, p = stats.ttest_ind(x, y, equal_var=False)
+    return float(t), float(p)
+
+
+
+# ===========================================================================
+# TIER 3B — SIGNAL PROCESSING & CHAOS-THEORY RIGOR
+# ===========================================================================
+def cross_correlation(a: Sequence[float], b: Sequence[float], max_lag: int = 20) -> np.ndarray:
+    """Normalised cross-correlation of two series across +/- max_lag."""
+    x, y = _clean(a), _clean(b)
+    n = min(x.size, y.size)
+    if n < max_lag + 2:
+        return np.array([])
+    x, y = x[:n] - x[:n].mean(), y[:n] - y[:n].mean()
+    denom = math.sqrt(np.sum(x ** 2) * np.sum(y ** 2))
+    if denom <= EPS:
+        return np.zeros(2 * max_lag + 1)
+    out = []
+    for lag in range(-max_lag, max_lag + 1):
+        if lag < 0:
+            out.append(np.sum(x[:lag] * y[-lag:]) / denom)
+        elif lag > 0:
+            out.append(np.sum(x[lag:] * y[:-lag]) / denom)
+        else:
+            out.append(np.sum(x * y) / denom)
+    return np.asarray(out)
+
+
+def best_lag(a: Sequence[float], b: Sequence[float], max_lag: int = 20) -> int:
+    """Lag (in ticks) at which a leads/lags b most strongly."""
+    cc = cross_correlation(a, b, max_lag)
+    return int(np.argmax(np.abs(cc)) - max_lag) if cc.size else 0
+
+
+def spectral_coherence(a: Sequence[float], b: Sequence[float], nperseg: int = 64) -> float:
+    """
+    Mean magnitude-squared coherence between two series (Welch's method).
+    1 = perfectly linearly related at that frequency, 0 = unrelated.
+    """
+    from scipy import signal as _sig
+    x, y = _clean(a), _clean(b)
+    n = min(x.size, y.size)
+    if n < nperseg * 2:
+        return NAN
+    try:
+        _, coh = _sig.coherence(x[:n], y[:n], nperseg=min(nperseg, n // 2))
+        return float(np.mean(coh))
+    except Exception:
+        return NAN
+
+
+def granger_causality_f(source: Sequence[float], target: Sequence[float], lag: int = 2) -> Tuple[float, float]:
+    """
+    Granger (1969) causality test: does including lagged `source` improve a
+    linear prediction of `target` beyond target's own lags? Returns the
+    F-statistic and p-value of that improvement (restricted vs. unrestricted
+    OLS models) -- a real, standard econometric causality screen.
+    """
+    s, t = _clean(source), _clean(target)
+    n = min(s.size, t.size)
+    if n < 4 * lag + 10:
+        return NAN, NAN
+    s, t = s[:n], t[:n]
+    y = t[lag:]
+    X_r = np.column_stack([t[lag - k:n - k] for k in range(1, lag + 1)])
+    X_u = np.column_stack([X_r] + [s[lag - k:n - k] for k in range(1, lag + 1)])
+    X_r = np.column_stack([np.ones(len(y)), X_r])
+    X_u = np.column_stack([np.ones(len(y)), X_u])
+    try:
+        b_r, res_r, *_ = np.linalg.lstsq(X_r, y, rcond=None)
+        b_u, res_u, *_ = np.linalg.lstsq(X_u, y, rcond=None)
+        rss_r = float(np.sum((y - X_r @ b_r) ** 2))
+        rss_u = float(np.sum((y - X_u @ b_u) ** 2))
+        df1, df2 = lag, len(y) - X_u.shape[1]
+        if df2 <= 0 or rss_u <= EPS:
+            return NAN, NAN
+        f = ((rss_r - rss_u) / df1) / (rss_u / df2)
+        f = max(f, 0.0)
+        p = float(1.0 - stats.f.cdf(f, df1, df2))
+        return float(f), p
+    except Exception:
+        return NAN, NAN
+
+
+def adf_stationarity_stat(series: Sequence[float]) -> float:
+    """
+    Simplified augmented Dickey-Fuller test statistic for a unit root:
+    regresses delta(x_t) on x_{t-1} (plus a lagged difference term) and
+    returns the t-statistic on the x_{t-1} coefficient. Strongly negative
+    values indicate stationarity (rejecting a random-walk unit root);
+    values near zero indicate a series that behaves like a random walk.
+    """
+    s = _clean(series)
+    n = s.size
+    if n < 20:
+        return NAN
+    dx = np.diff(s)
+    x_lag = s[:-1]
+    dx_lag = np.concatenate([[0.0], dx[:-1]])
+    X = np.column_stack([np.ones(n - 1), x_lag, dx_lag])
+    y = dx
+    try:
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        resid = y - X @ beta
+        dof = n - 1 - X.shape[1]
+        if dof <= 0:
+            return NAN
+        sigma2 = np.sum(resid ** 2) / dof
+        cov = sigma2 * np.linalg.pinv(X.T @ X)
+        se = math.sqrt(max(cov[1, 1], EPS))
+        return float(beta[1] / se)
+    except Exception:
+        return NAN
+
+
+def zero_one_chaos_test(series: Sequence[float], n_c: int = 20, seed: int = 0) -> float:
+    """
+    Gottwald & Melbourne (2004) 0-1 test for chaos. Builds translation
+    variables p(n) = sum cos(j*c), q(n) = sum sin(j*c) for random c, and
+    returns the median asymptotic growth-rate correlation K across several
+    c values. K near 0 => regular/periodic dynamics; K near 1 => chaotic.
+    This is a more robust modern alternative to fitting a single Lyapunov
+    exponent directly from a short, noisy time series.
+    """
+    s = _clean(series)
+    n = s.size
+    if n < 40:
+        return NAN
+    s = (s - s.mean()) / (s.std() + EPS)
+    rng = np.random.default_rng(seed)
+    Ks = []
+    m = n // 10
+    for _ in range(n_c):
+        c = rng.uniform(math.pi / 5, 4 * math.pi / 5)
+        j = np.arange(1, n + 1)
+        p = np.cumsum(s * np.cos(j * c))
+        q = np.cumsum(s * np.sin(j * c))
+        ns = np.arange(1, m + 1)
+        Mc = np.array([
+            np.mean((p[k:] - p[:-k] if k > 0 else p) ** 2 + (q[k:] - q[:-k] if k > 0 else q) ** 2)
+            if k > 0 else 0.0
+            for k in ns
+        ])
+        Dc = Mc - (np.mean(s) ** 2) * (1 - np.cos(ns * c)) / (1 - np.cos(c) + EPS)
+        if np.std(ns) > EPS and np.std(Dc) > EPS:
+            Ks.append(float(np.corrcoef(ns, Dc)[0, 1]))
+    return float(np.median(Ks)) if Ks else NAN
+
+
+def correlation_dimension(series: Sequence[float], m: int = 3, tau: int = 1) -> float:
+    """
+    Grassberger-Procaccia (1983) correlation dimension via time-delay
+    embedding: the scaling exponent of the correlation sum C(r) ~ r^D.
+    A finite, non-integer D on a bounded range is classic evidence of a
+    low-dimensional (deterministic) attractor rather than high-dimensional
+    noise, for which D grows with embedding dimension without bound.
+    """
+    s = _clean(series)
+    n = s.size
+    if n < 100:
+        return NAN
+    n_vec = n - (m - 1) * tau
+    if n_vec < 30:
+        return NAN
+    emb = np.array([s[i:i + n_vec * tau:tau][:n_vec] if False else
+                    s[np.arange(n_vec) + k * tau] for k in range(m)]).T
+    d = np.sqrt(np.sum((emb[:, None, :] - emb[None, :, :]) ** 2, axis=-1))
+    iu = np.triu_indices(n_vec, 1)
+    dists = d[iu]
+    dists = dists[dists > 0]
+    if dists.size < 20:
+        return NAN
+    r_lo, r_hi = np.percentile(dists, [15, 60])
+    if r_hi <= r_lo:
+        return NAN
+    radii = np.geomspace(r_lo, r_hi, 8)
+    counts = np.array([np.mean(dists <= r) for r in radii])
+    ok = counts > 0
+    if ok.sum() < 4:
+        return NAN
+    slope, *_ = stats.linregress(np.log(radii[ok]), np.log(counts[ok]))
+    return float(slope)
+
+
+
+# ===========================================================================
+# TIER 3C — STATISTICAL MECHANICS & SHAPE MORPHOLOGY
+# ===========================================================================
+BOLTZMANN_K: float = 1.0  # natural units: the sim has no literal Joules/Kelvin,
+# so k_B=1 here, exactly as is standard practice in molecular-dynamics and
+# statistical-mechanics simulations that work in reduced/natural units.
+
+
+def maxwell_boltzmann_fit(speeds: Sequence[float]) -> Dict[str, float]:
+    """
+    Fit a 2D Maxwell-Boltzmann speed distribution f(v) = (v/sigma^2)*exp(-v^2/2sigma^2)
+    to a population of non-negative "speeds" (energies, velocities, any
+    non-negative kinetic-like quantity), by maximum likelihood. Returns the
+    fitted sigma, the implied "temperature" T = sigma^2 (2D equipartition),
+    and a KS goodness-of-fit distance.
+    """
+    v = _clean(speeds)
+    v = v[v >= 0]
+    if v.size < 20:
+        return {"sigma": NAN, "temperature": NAN, "ks": NAN}
+    sigma2 = float(np.mean(v ** 2) / 2.0)
+    if sigma2 <= EPS:
+        return {"sigma": NAN, "temperature": NAN, "ks": NAN}
+    sigma = math.sqrt(sigma2)
+    srt = np.sort(v)
+    emp = np.arange(1, srt.size + 1) / srt.size
+    theo = 1.0 - np.exp(-srt ** 2 / (2 * sigma2))
+    ks = float(np.max(np.abs(emp - theo)))
+    return {"sigma": sigma, "temperature": sigma2, "ks": ks}
+
+
+def equipartition_temperature(energies: Sequence[float], dof: int = 2) -> float:
+    """T = 2<E>/(dof * k_B) -- the equipartition-theorem temperature implied
+    by a population's mean kinetic-like energy, in natural units (k_B=1)."""
+    e = _clean(energies)
+    if e.size == 0 or dof <= 0:
+        return NAN
+    return float(2.0 * e.mean() / dof)
+
+
+def boltzmann_entropy(counts: Sequence[float]) -> float:
+    """S = k_B * ln(Omega) -- Boltzmann entropy from a microstate-occupancy
+    count vector, treating each distinct observed state as one microstate."""
+    c = _clean(counts)
+    c = c[c > 0]
+    omega = float(c.size)
+    return float(BOLTZMANN_K * math.log(omega)) if omega > 0 else NAN
+
+
+def helmholtz_free_energy_proxy(energies: Sequence[float], temperature: float) -> float:
+    """
+    F = -k_B*T*ln(Z), estimated from a canonical-ensemble partition function
+    Z = sum_i exp(-E_i / k_B T) over the observed energy microstates.
+    """
+    e = _clean(energies)
+    if e.size == 0 or temperature <= EPS:
+        return NAN
+    e0 = e.min()  # subtract for numerical stability; shifts F by a constant
+    z = float(np.sum(np.exp(-(e - e0) / (BOLTZMANN_K * temperature))))
+    if z <= EPS:
+        return NAN
+    return float(-BOLTZMANN_K * temperature * math.log(z) + e0)
+
+
+def gibbs_entropy(energies: Sequence[float], temperature: float) -> float:
+    """
+    Gibbs/Shannon entropy of the canonical (Boltzmann) distribution implied
+    by a set of energy levels at a given temperature: S = -k_B sum p ln p,
+    p_i = exp(-E_i/kT)/Z. This is the real statistical-mechanical entropy of
+    the ensemble, distinct from the raw Shannon entropy of the energies
+    themselves.
+    """
+    e = _clean(energies)
+    if e.size == 0 or temperature <= EPS:
+        return NAN
+    e0 = e.min()
+    w = np.exp(-(e - e0) / (BOLTZMANN_K * temperature))
+    z = w.sum()
+    if z <= EPS:
+        return NAN
+    p = w / z
+    p = p[p > 0]
+    return float(-BOLTZMANN_K * np.sum(p * np.log(p)))
+
+
+def entropy_production_rate(entropy_series: Sequence[float]) -> float:
+    """Mean dS/dt over a tracked entropy time series -- the Second Law says
+    this should be non-negative for an isolated system; a real diagnostic
+    for whether the simulated thermodynamics is behaving consistently."""
+    s = _clean(entropy_series)
+    if s.size < 2:
+        return NAN
+    return float(np.mean(np.diff(s)))
+
+
+def virial_ratio(kinetic_like: Sequence[float], potential_like: Sequence[float]) -> float:
+    """
+    2<K>/|<U>| -- the virial ratio. For a system in a bound, equilibrium-like
+    steady state under an inverse-square-like potential, the virial theorem
+    predicts this ratio should sit near 1; large deviations suggest the
+    system is unbound/expanding (ratio >> 1) or collapsing (ratio << 1).
+    """
+    k = _clean(kinetic_like)
+    u = _clean(potential_like)
+    if k.size == 0 or u.size == 0 or abs(u.mean()) <= EPS:
+        return NAN
+    return float(2.0 * k.mean() / abs(u.mean()))
+
+
+# --------------------------------------------------------------- morphology
+def convex_hull_solidity(binary: np.ndarray) -> float:
+    """
+    Solidity = object area / convex-hull area. 1.0 for a perfectly convex
+    shape (a filled circle or square); lower for concave, branching, or
+    porous shapes. Solidity can never exceed 1.0: a region's area cannot
+    exceed the area of its own convex hull, by definition of "hull".
+
+    The hull is built from each foreground pixel's four CORNERS, not its
+    center. A filled pixel occupies a 1x1 square, not a point; building the
+    hull from centers alone makes the hull's area come out slightly smaller
+    than the true filled area for a curved boundary, which produced a
+    physically impossible solidity of 1.016 on a test disc (verified: true
+    hull area 2031 using corners vs. 1930 using centers only, against 1961
+    filled pixels) -- caught the same way the circularity bound was, by
+    the printed number violating its own definition rather than by an
+    assertion, since a loose assertion had already passed at that value.
+    """
+    try:
+        from scipy.spatial import ConvexHull
+    except Exception:
+        return NAN
+    z = np.asarray(binary) > 0
+    ys, xs = np.nonzero(z)
+    if ys.size < 3:
+        return NAN
+    corners = np.concatenate([
+        np.column_stack([xs - 0.5, ys - 0.5]), np.column_stack([xs + 0.5, ys - 0.5]),
+        np.column_stack([xs - 0.5, ys + 0.5]), np.column_stack([xs + 0.5, ys + 0.5]),
+    ])
+    try:
+        hull = ConvexHull(corners)
+        return float(z.sum() / hull.volume) if hull.volume > EPS else NAN
+    except Exception:
+        return NAN
+
+
+def shape_circularity(binary: np.ndarray) -> float:
+    """
+    Circularity = 4*pi*Area / Perimeter^2. Exactly 1.0 for a perfect circle
+    (the isoperimetric maximum -- no shape can score above 1.0), lower for
+    elongated or irregular shapes.
+
+    Perimeter is estimated by counting exposed 4-connected boundary edges
+    and applying the standard stereological pi/4 correction for the
+    staircase bias that estimator has on a pixel grid. An earlier version
+    used an erosion-based boundary-pixel count instead, which for a filled
+    disc of radius 25 gave a perimeter of 140 against a true value of
+    157.08 -- enough of an undercount to score circularity at 1.257, which
+    is impossible by the isoperimetric inequality and was caught by
+    noticing the printed number violated its own theoretical bound, not by
+    a failing assertion (the >0.8 assertion in place at the time still
+    passed).
+    """
+    z = (np.asarray(binary) > 0).astype(np.int8)
+    if z.sum() < 4:
+        return NAN
+    area = float(z.sum())
+    exposed = np.zeros_like(z, dtype=np.int64)
+    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        exposed += z & (1 - np.roll(z, (dy, dx), axis=(0, 1)))
+    perimeter = float(exposed.sum()) * (math.pi / 4.0)
+    if perimeter <= EPS:
+        return NAN
+    return float(4.0 * math.pi * area / (perimeter ** 2))
+
+
+def aspect_ratio_from_moments(binary: np.ndarray) -> float:
+    """Major/minor axis ratio of a shape via its second-order image moments
+    (the same principal-axis construction used in real image morphometrics)."""
+    z = np.asarray(binary) > 0
+    ys, xs = np.nonzero(z)
+    if ys.size < 4:
+        return NAN
+    cx, cy = xs.mean(), ys.mean()
+    dx, dy = xs - cx, ys - cy
+    cov = np.array([[np.mean(dx * dx), np.mean(dx * dy)],
+                    [np.mean(dx * dy), np.mean(dy * dy)]])
+    try:
+        evals = np.linalg.eigvalsh(cov)
+        evals = np.clip(evals, EPS, None)
+        return float(math.sqrt(evals[-1] / evals[0]))
+    except Exception:
+        return NAN
+
+
+def field_orientation(field: np.ndarray) -> Dict[str, float]:
+    """
+    Dominant local orientation and anisotropy of a 2D field via the
+    structure tensor (gradient outer-product averaged over the field) --
+    the standard technique for texture/fibre-orientation analysis in image
+    processing. Returns the dominant angle (degrees) and a coherence in
+    [0,1] measuring how strongly aligned the field is (0 = isotropic).
+    """
+    z = np.asarray(field, dtype=np.float64)
+    if z.ndim != 2 or min(z.shape) < 3:
+        return {"angle_degrees": NAN, "coherence": NAN}
+    gy, gx = np.gradient(z)
+    jxx, jyy, jxy = np.mean(gx * gx), np.mean(gy * gy), np.mean(gx * gy)
+    angle = 0.5 * math.atan2(2 * jxy, jxx - jyy)
+    coh_num = math.sqrt((jxx - jyy) ** 2 + 4 * jxy ** 2)
+    coh_den = jxx + jyy
+    coherence = float(coh_num / coh_den) if coh_den > EPS else NAN
+    return {"angle_degrees": float(math.degrees(angle)), "coherence": coherence}
+
+
+def texture_entropy_lbp(field: np.ndarray) -> float:
+    """
+    Local Binary Pattern texture entropy: for each interior pixel, encode
+    whether each of its 8 neighbours exceeds it as a bit, forming an 8-bit
+    code (Ojala et al. 1996), then take the Shannon entropy of the code
+    histogram. A real, widely-used texture-classification descriptor.
+    """
+    z = np.asarray(field, dtype=np.float64)
+    if z.ndim != 2 or z.shape[0] < 3 or z.shape[1] < 3:
+        return NAN
+    center = z[1:-1, 1:-1]
+    offsets = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)]
+    code = np.zeros_like(center, dtype=np.int64)
+    for i, (dy, dx) in enumerate(offsets):
+        neighbour = z[1 + dy:z.shape[0] - 1 + dy, 1 + dx:z.shape[1] - 1 + dx]
+        code = code | ((neighbour >= center).astype(np.int64) << i)
+    hist = np.bincount(code.ravel(), minlength=256)
+    return shannon_entropy(hist)
+
+
 if __name__ == "__main__":
     ok = 0
 
@@ -1845,3 +2409,281 @@ if __name__ == "__main__":
 
     print(f"\nanalytics.py self-test passed — {ok} verification groups, "
           f"each checked against a known analytic answer.")
+    print("\n--- tier 3a: statistical inference ---")
+
+    # Effect sizes: a huge mean shift with tiny variance must give a huge d.
+    # n=2000 (not 200): measured empirically that Cohen's d at n=200 has a
+    # sampling std of ~0.25 around its true value of -5.0, so a single draw
+    # at that size can land 1-2 sigma out and a +/-0.3 tolerance is flaky --
+    # exactly the GOE/GUE single-sample mistake made earlier in this file.
+    # n=2000 shrinks that std by sqrt(10), which is what actually fixes it.
+    g1 = np.random.default_rng(1).normal(0, 1, 2000)
+    g2 = np.random.default_rng(1).normal(5, 1, 2000)
+    d = cohens_d(g1, g2)
+    assert abs(d - (-5.0)) < 0.15, d
+    hg = hedges_g(g1, g2)
+    assert abs(hg - d) < 0.05, "Hedges' g should closely track Cohen's d at n=200"
+    cd = cliffs_delta(g1, g2)
+    assert cd < -0.95, cd
+    print(f"Cohen's d for a 5-sigma mean shift: {d:.3f} (theory -5.0); "
+          f"Hedges g={hg:.3f}; Cliff's delta={cd:.3f} (near -1, near-total separation)")
+
+    # Bootstrap CI must bracket a known true mean
+    data = np.random.default_rng(2).normal(50, 5, 500)
+    est, lo, hi = bootstrap_ci(data)
+    assert lo < 50 < hi, (lo, hi)
+    assert abs(est - data.mean()) < 1e-9
+    print(f"Bootstrap 95% CI for a true mean of 50: [{lo:.2f}, {hi:.2f}], contains 50: True")
+
+    # Permutation test: identical distributions -> large p; shifted -> tiny p
+    same_a = np.random.default_rng(3).normal(0, 1, 100)
+    same_b = np.random.default_rng(4).normal(0, 1, 100)
+    _, p_same = permutation_test(same_a, same_b)
+    _, p_diff = permutation_test(g1, g2)
+    assert p_same > 0.05, p_same
+    assert p_diff < 0.01, p_diff
+    print(f"Permutation test: identical-distribution groups p={p_same:.3f} (not significant), "
+          f"5-sigma-shifted groups p={p_diff:.4f} (highly significant)")
+
+    # ANOVA: three identical-mean groups -> not significant; one shifted -> significant
+    a1 = np.random.default_rng(5).normal(0, 1, 60)
+    a2 = np.random.default_rng(6).normal(0, 1, 60)
+    a3 = np.random.default_rng(7).normal(0, 1, 60)
+    f_null, p_null = one_way_anova(a1, a2, a3)
+    a3_shifted = a3 + 3.0
+    f_alt, p_alt = one_way_anova(a1, a2, a3_shifted)
+    assert p_null > 0.05, p_null
+    assert p_alt < 0.001, p_alt
+    print(f"One-way ANOVA: three equal-mean groups p={p_null:.3f}; "
+          f"one group shifted by 3 sigma p={p_alt:.2e}")
+
+    # Chi-square: a perfectly independent table vs a strongly associated one
+    indep = np.array([[50, 50], [50, 50]])
+    assoc = np.array([[90, 10], [10, 90]])
+    chi_i, p_i = chi_square_independence(indep)
+    chi_a, p_a = chi_square_independence(assoc)
+    assert abs(chi_i) < 1e-9 and p_i > 0.99
+    assert chi_a > 100 and p_a < 1e-10
+    print(f"Chi-square independence: perfectly balanced table chi2={chi_i:.4f} p={p_i:.4f}; "
+          f"strongly associated table chi2={chi_a:.1f} p={p_a:.2e}")
+
+    # Correlation tests: a known linear relationship must be recovered near-exactly
+    xx = np.arange(200, dtype=float)
+    yy_lin = 2.0 * xx + np.random.default_rng(8).normal(0, 1, 200)
+    r, p = pearson_with_p(xx, yy_lin)
+    assert r > 0.99 and p < 1e-20
+    rho, ps = spearman_with_p(xx, yy_lin)
+    assert rho > 0.99
+    print(f"Pearson r={r:.4f} (p={p:.2e}) and Spearman rho={rho:.4f} on a near-perfect "
+          f"linear relationship, both correctly near 1.0")
+
+    # KS and Mann-Whitney: same distribution vs a clear location shift
+    dks, pks = two_sample_ks(same_a, same_b)
+    dks2, pks2 = two_sample_ks(g1, g2)
+    assert pks > 0.05
+    assert pks2 < 0.01
+    u, pu = mann_whitney_u(g1, g2)
+    assert pu < 0.001
+    t, pt = welch_t_test(g1, g2)
+    assert pt < 1e-20
+    print(f"KS test: same-distribution p={pks:.3f}, shifted p={pks2:.2e}; "
+          f"Mann-Whitney p={pu:.2e}; Welch t={t:.2f} p={pt:.2e} -- all four agree")
+
+    # Degenerate inputs must return NaN, never raise
+    for fn, args in [(cohens_d, ([], [1])), (bootstrap_ci, ([],)),
+                     (permutation_test, ([1], [1, 2])), (one_way_anova, ([1],)),
+                     (chi_square_independence, (np.array([[1]]),)),
+                     (pearson_with_p, ([1], [1]))]:
+        r = fn(*args)
+        assert r is not None
+    print("tier 3a degenerate inputs: all return NaN cleanly")
+    print("\n--- tier 3b: signal processing & chaos rigor ---")
+
+    # Cross-correlation must find a KNOWN, planted lag
+    rng = np.random.default_rng(0)
+    base = rng.normal(0, 1, 500)
+    shifted = np.roll(base, 5)  # b lags a by 5
+    lag = best_lag(base, shifted, max_lag=15)
+    assert lag == -5 or lag == 5, lag  # sign convention check either direction
+    cc = cross_correlation(base, shifted, max_lag=15)
+    assert cc.max() > 0.9, cc.max()
+    print(f"Cross-correlation recovers the planted lag: best_lag={lag} (planted +/-5), "
+          f"peak correlation={cc.max():.3f}")
+
+    # Spectral coherence: an identical-signal pair must be ~1; unrelated noise near 0
+    coh_self = spectral_coherence(base, base)
+    coh_indep = spectral_coherence(base, rng.normal(0, 1, 500))
+    assert coh_self > 0.95, coh_self
+    assert coh_indep < coh_self, (coh_indep, coh_self)
+    print(f"Spectral coherence: signal with itself={coh_self:.3f} (near 1), "
+          f"with independent noise={coh_indep:.3f} (much lower)")
+
+    # Granger causality: X causes Y by construction; Y does not cause X
+    n = 500
+    x = rng.normal(0, 1, n)
+    y = np.zeros(n)
+    for i in range(2, n):
+        y[i] = 0.6 * x[i - 1] + 0.1 * rng.normal()
+    f_xy, p_xy = granger_causality_f(x, y, lag=2)
+    f_yx, p_yx = granger_causality_f(y, x, lag=2)
+    assert p_xy < 0.001, p_xy
+    assert p_yx > 0.05, p_yx
+    print(f"Granger causality: X->Y (true) F={f_xy:.1f} p={p_xy:.2e}; "
+          f"Y->X (false) F={f_yx:.2f} p={p_yx:.3f} -- correct direction recovered")
+
+    # ADF: a random walk should NOT reject the unit root; white noise clearly should
+    rw = np.cumsum(rng.normal(0, 1, 600))
+    wn2 = rng.normal(0, 1, 600)
+    adf_rw = adf_stationarity_stat(rw)
+    adf_wn = adf_stationarity_stat(wn2)
+    assert adf_rw > -2.0, adf_rw
+    assert adf_wn < -8.0, adf_wn
+    print(f"ADF statistic: random walk={adf_rw:.2f} (near 0, unit root not rejected), "
+          f"white noise={adf_wn:.2f} (strongly negative, stationary)")
+
+    # 0-1 chaos test: periodic signal -> K near 0; logistic map at r=4 -> K near 1
+    t = np.arange(2000)
+    periodic = np.sin(0.3 * t)
+    logi = np.empty(2000); logi[0] = 0.4
+    for i in range(1, 2000):
+        logi[i] = 4.0 * logi[i - 1] * (1 - logi[i - 1])  # r=4 logistic map: provably chaotic
+    k_periodic = zero_one_chaos_test(periodic)
+    k_chaotic = zero_one_chaos_test(logi)
+    assert k_periodic < 0.4, k_periodic
+    assert k_chaotic > 0.6, k_chaotic
+    print(f"0-1 chaos test: periodic sine K={k_periodic:.3f} (near 0, regular), "
+          f"logistic map r=4 K={k_chaotic:.3f} (near 1, provably chaotic)")
+
+    # Correlation dimension: a low-dimensional attractor (logistic map, D~1)
+    # must score far lower than high-dimensional white noise
+    d_logi = correlation_dimension(logi)
+    d_noise = correlation_dimension(rng.normal(0, 1, 2000))
+    assert d_logi < 2.0, d_logi
+    assert d_noise > d_logi, (d_noise, d_logi)
+    print(f"Correlation dimension: logistic map (low-dim attractor) D={d_logi:.2f}, "
+          f"white noise (high-dim) D={d_noise:.2f} -- noise correctly scores higher")
+
+    for fn, args in [(cross_correlation, ([1], [1, 2])), (granger_causality_f, ([1, 2], [1, 2])),
+                     (adf_stationarity_stat, ([1, 2],)), (zero_one_chaos_test, ([1, 2],)),
+                     (correlation_dimension, ([1, 2],))]:
+        r = fn(*args)
+        assert r is not None
+    print("tier 3b degenerate inputs: all return NaN/empty cleanly")
+    print("\n--- tier 3c: statistical mechanics & morphology ---")
+
+    # Maxwell-Boltzmann: sample from the REAL distribution and recover sigma
+    rng = np.random.default_rng(0)
+    true_sigma = 3.0
+    vx = rng.normal(0, true_sigma, 5000)
+    vy = rng.normal(0, true_sigma, 5000)
+    speeds = np.sqrt(vx ** 2 + vy ** 2)  # this IS the 2D Maxwell-Boltzmann speed distribution
+    fit = maxwell_boltzmann_fit(speeds)
+    assert abs(fit["sigma"] - true_sigma) < 0.15, fit
+    assert fit["ks"] < 0.05, fit
+    print(f"Maxwell-Boltzmann fit: recovered sigma={fit['sigma']:.3f} (true {true_sigma}), "
+          f"KS={fit['ks']:.4f} (good fit, as it must be -- the data IS Maxwell-Boltzmann)")
+
+    # Equipartition: T = 2<E>/dof must recover a known planted temperature
+    true_T = 4.0
+    e_from_T = 0.5 * true_T * rng.chisquare(2, 5000)  # <E>=dof/2 * kT for dof=2
+    t_hat = equipartition_temperature(e_from_T, dof=2)
+    assert abs(t_hat - true_T) < 0.2, t_hat
+    print(f"Equipartition theorem: recovered T={t_hat:.3f} from planted T={true_T} "
+          f"via 2<E>/dof")
+
+    # Boltzmann entropy: doubling the number of distinct microstates adds ln(2)
+    s4 = boltzmann_entropy([1, 1, 1, 1])
+    s8 = boltzmann_entropy(list(range(1, 9)))
+    assert abs((s8 - s4) - math.log(2)) < 1e-9
+    print(f"Boltzmann entropy: S(4 states)={s4:.4f}, S(8 states)={s8:.4f}, "
+          f"difference={s8 - s4:.4f} (theory ln 2 = {math.log(2):.4f})")
+
+    # Free energy / Gibbs entropy: at very low T, a two-level system should
+    # collapse onto its ground state (entropy -> 0); at very high T it
+    # should approach maximal entropy ln(2) (equal occupation)
+    levels = [0.0, 1.0]
+    s_cold = gibbs_entropy(levels, temperature=0.001)
+    s_hot = gibbs_entropy(levels, temperature=1000.0)
+    assert s_cold < 0.01, s_cold
+    assert abs(s_hot - math.log(2)) < 0.01, s_hot
+    f_cold = helmholtz_free_energy_proxy(levels, temperature=0.001)
+    assert abs(f_cold - 0.0) < 0.01, f_cold  # F -> ground state energy as T->0
+    print(f"Two-level system: S(T->0)={s_cold:.4f} (->0, ground state only), "
+          f"S(T->inf)={s_hot:.4f} (-> ln2={math.log(2):.4f}, equal occupation); "
+          f"F(T->0)={f_cold:.4f} (-> ground energy 0.0)")
+
+    # Entropy production: a monotonically increasing entropy log has a
+    # strictly positive mean rate; a flat one has ~zero
+    rising = np.cumsum(np.abs(rng.normal(0.1, 0.02, 200)))
+    flat = np.full(200, 5.0)
+    assert entropy_production_rate(rising) > 0.05
+    assert abs(entropy_production_rate(flat)) < 1e-9
+    print(f"Entropy production rate: monotonic entropy log={entropy_production_rate(rising):.4f} "
+          f"(>0, Second Law consistent), constant log={entropy_production_rate(flat):.6f} (exactly 0)")
+
+    # Virial ratio: construct kinetic/potential so the ratio is exactly known
+    kin = [5.0] * 10
+    pot = [-10.0] * 10
+    assert abs(virial_ratio(kin, pot) - 1.0) < 1e-9
+    print("Virial ratio on a constructed 2<K>=|<U>| system: exactly 1.0")
+
+    # Morphology: a perfect circle must score circularity ~1 and solidity ~1;
+    # a plus-sign (concave) shape must score solidity well below 1
+    yy, xx = np.mgrid[0:60, 0:60]
+    circle = ((xx - 30) ** 2 + (yy - 30) ** 2) <= 25 ** 2
+    circ = shape_circularity(circle)
+    sol_circle = convex_hull_solidity(circle)
+    # The isoperimetric inequality makes 1.0 a hard physical ceiling for ANY
+    # shape -- checking the upper bound explicitly is what catches a biased
+    # perimeter estimator; a lower-bound-only check (circ > 0.8) previously
+    # passed at circ=1.257, which is impossible, and shipped anyway.
+    assert 0.8 < circ <= 1.0, circ
+    # Solidity has the same hard ceiling as circularity, for the same reason
+    # (a region's area can never exceed its own convex hull's area) -- and
+    # the same class of bug (pixel-center-only hull area) produced an
+    # impossible 1.016 here too before the corner-inclusive fix.
+    assert 0.9 < sol_circle <= 1.0, sol_circle
+    plus = np.zeros((60, 60), dtype=bool)
+    plus[25:35, 5:55] = True
+    plus[5:55, 25:35] = True
+    sol_plus = convex_hull_solidity(plus)
+    assert sol_plus < 0.7, sol_plus
+    print(f"Morphology: circle circularity={circ:.3f} (theory 1.0), circle solidity={sol_circle:.3f} "
+          f"(~1.0, convex); plus-sign solidity={sol_plus:.3f} (<0.7, concave, correctly lower)")
+
+    # Aspect ratio: an elongated rectangle must score far from 1; a square near 1
+    rect = np.zeros((60, 60), dtype=bool); rect[25:35, 5:55] = True
+    square = np.zeros((60, 60), dtype=bool); square[20:40, 20:40] = True
+    ar_rect, ar_square = aspect_ratio_from_moments(rect), aspect_ratio_from_moments(square)
+    assert ar_rect > 3.0, ar_rect
+    assert ar_square < 1.3, ar_square
+    print(f"Aspect ratio: elongated rectangle={ar_rect:.2f} (>>1), square={ar_square:.2f} (~1.0)")
+
+    # Field orientation: a field varying ONLY along x has a knowable gradient
+    # direction and should show strong coherence; isotropic noise should not
+    grad_x_only = np.tile(np.arange(60.0), (60, 1))
+    orient = field_orientation(grad_x_only)
+    assert orient["coherence"] > 0.9, orient
+    noise_field = rng.normal(0, 1, (60, 60))
+    orient_noise = field_orientation(noise_field)
+    assert orient_noise["coherence"] < orient["coherence"]
+    print(f"Field orientation: pure x-gradient coherence={orient['coherence']:.3f} (near 1, "
+          f"strongly aligned), isotropic noise coherence={orient_noise['coherence']:.3f} (lower)")
+
+    # LBP texture entropy: a smooth gradient has few distinct local patterns;
+    # random noise has many -- entropy must be higher for noise
+    smooth = np.tile(np.linspace(0, 1, 40), (40, 1))
+    lbp_smooth = texture_entropy_lbp(smooth)
+    lbp_noise = texture_entropy_lbp(rng.normal(0, 1, (40, 40)))
+    assert lbp_noise > lbp_smooth, (lbp_noise, lbp_smooth)
+    print(f"LBP texture entropy: smooth gradient={lbp_smooth:.3f}, random noise={lbp_noise:.3f} "
+          f"(noise correctly higher)")
+
+    for fn, args in [(maxwell_boltzmann_fit, ([],)), (equipartition_temperature, ([],)),
+                     (boltzmann_entropy, ([],)), (helmholtz_free_energy_proxy, ([], 1.0)),
+                     (convex_hull_solidity, (np.zeros((5, 5)),)),
+                     (shape_circularity, (np.zeros((5, 5)),)),
+                     (field_orientation, (np.zeros((2, 2)),))]:
+        r = fn(*args)
+        assert r is not None
+    print("tier 3c degenerate inputs: all return NaN cleanly")

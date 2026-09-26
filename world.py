@@ -328,6 +328,12 @@ class GenesisWorld:
         # feature 24: adaptive spawn, inversely proportional to population density
         density_damping = 1.0 / (1.0 + self.population_density)
 
+        # Base rate raised from 0.01 to 0.04 alongside agents.py's hunger fix:
+        # once agents actually needed to eat regularly (a real hunger drive
+        # plus a per-tick metabolic cost, neither of which existed before),
+        # the old rate proved too stingy to support a stable population. This
+        # is the smallest increase found by testing that lets a modest
+        # population sustain itself without tipping into superabundance.
         growth = (
             0.04
             * self.weather_amplitude

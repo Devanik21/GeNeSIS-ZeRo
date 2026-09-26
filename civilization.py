@@ -197,7 +197,7 @@ class Civilization:
         if n_index > SINGULARITY_NOVELTY_THRESHOLD and self.tech_tree.number_of_nodes() >= SINGULARITY_MIN_TECH_NODES:
             if not breakthrough:
                 self.events.append(
-                    f"⚡ SINGULARITY OVERRIDE: tick {tick}, agent {agent.agent_id} — "
+                    f"◉ SINGULARITY OVERRIDE: tick {tick}, agent {agent.agent_id} — "
                     f"novelty {n_index:.3f} auto-promoted at {self.tech_tree.number_of_nodes()} tech nodes"
                 )
             breakthrough = True
@@ -288,7 +288,7 @@ class Civilization:
                         formed = self.alliance_formed_tick.pop(pair, tick)
                         self.alliance_lifespans.append(tick - formed)
                         self.events.append(
-                            f"\U0001F531 SCHISM: tribe {a} and tribe {b} at tick {tick} "
+                            f"⟂ SCHISM: tribe {a} and tribe {b} at tick {tick} "
                             f"(epistemic distance {d_epi:.2f} > {SCHISM_THRESHOLD})"
                         )
                     continue
@@ -297,9 +297,9 @@ class Civilization:
                     self.tribes[a].alliances.add(b)
                     self.tribes[b].alliances.add(a)
                     self.alliance_formed_tick[frozenset((a, b))] = tick
-                    self.events.append(f"\U0001F91D ALLIANCE: tribe {a} and tribe {b} at tick {tick}")
+                    self.events.append(f"⟐ ALLIANCE: tribe {a} and tribe {b} at tick {tick}")
                 elif (ratio > WAR_RATIO_HIGH or ratio < WAR_RATIO_LOW) and rng.random() < WAR_ROLL_PROB:
-                    self.events.append(f"\u2694\uFE0F WAR: tribe {a} vs tribe {b} at tick {tick} (power ratio {ratio:.2f})")
+                    self.events.append(f"⨯ WAR: tribe {a} vs tribe {b} at tick {tick} (power ratio {ratio:.2f})")
 
     # ------------------------------------------------------------------
     # Full per-tick step

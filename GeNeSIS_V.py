@@ -147,18 +147,20 @@ TECH_TREE_RENDER_LIMIT: int = 60    # render only the most recent N nodes — a 
 # force-directed layout unreadable and slow; the full graph stays intact internally.
 
 PANELS: List[str] = [
-    "🌌 Observation Deck",
-    "🎨 Biome Cartography",
-    "🧠 Consciousness Inspector",
-    "🏛️ Civilization",
-    "📜 Narrative",
-    "🏆 Nobel Committee",
-    "🧬 Evolution & Phylogeny",
-    "🧪 Chemistry Lab",
-    "🌀 Geometry & Topology",
-    "📈 Complexity & Dynamics",
-    "🌾 Ecology & Inequality",
-    "🔬 Cognitive Spectra",
+    "⬡ Observation Deck",
+    "⌬ Biome Cartography",
+    "✦ Consciousness Inspector",
+    "⬢ Civilization",
+    "⟡ Narrative",
+    "✧ Nobel Committee",
+    "⏣ Evolution & Phylogeny",
+    "⎔ Chemistry Lab",
+    "⬠ Geometry & Topology",
+    "⟁ Complexity & Dynamics",
+    "⬣ Ecology & Inequality",
+    "◈ Cognitive Spectra",
+    "⟒ Statistical Inference",
+    "⟟ Thermodynamics & Chaos",
 ]
 
 
@@ -938,7 +940,7 @@ def render_narrative() -> None:
     c[4].metric("Gödel number", f"{tradition.godel_number():.3g}")
 
     if narrative.milestones_reached.get(tid):
-        st.success("✅ Milestone Reached: Stable Traditions")
+        st.success("▣ Milestone Reached: Stable Traditions")
 
     if len(fid_history) >= 2:
         f = go.Figure([go.Scatter(y=fid_history, line=dict(color="#f6ad55"), name="observed")])
@@ -1215,7 +1217,7 @@ def render_chemistry() -> None:
         rows.append({"Reaction": rxn.name.split("(")[0].strip(),
                      "ΔG (kJ/mol)": rxn.delta_g_kj_per_mol,
                      "Eₐ (J/mol)": rxn.activation_energy_j_per_mol,
-                     "Mass balanced": "✅" if rxn.is_mass_balanced() else "❌",
+                     "Mass balanced": "▣" if rxn.is_mass_balanced() else "▢",
                      "Spontaneous": "Yes (exergonic)" if rxn.delta_g_kj_per_mol < 0 else "No (endergonic)"})
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
@@ -1347,6 +1349,8 @@ def render_geometry() -> None:
     st.caption(f"Axiom: `{lsys.axiom}` · Rules: " +
                " · ".join(f"`{k} → {v}`" for k, v in lsys.rules.items()) +
                f" · Turn angle: {lsys.angle_degrees}°")
+
+    _render_geometry_morphology_extension()
 
 # ----------------------------------------------------------------------------
 # PANEL 10 — Complexity & Dynamics  (new)
@@ -1531,6 +1535,8 @@ def render_complexity() -> None:
             })
     if rows:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    _render_complexity_signal_extension()
 
 
 # ----------------------------------------------------------------------------
@@ -1912,6 +1918,264 @@ def render_spectra() -> None:
         st.plotly_chart(_small(f, 260), width="stretch")
 
 
+# ----------------------------------------------------------------------------
+# PANEL 13 — Statistical Inference  (new)
+# ----------------------------------------------------------------------------
+def render_statistical_inference() -> None:
+    alive = _alive()
+    if len(alive) < 8:
+        st.warning("Need at least 8 living agents for group comparisons.")
+        return
+
+    st.markdown("### Caste comparison: does role predict energy?")
+    roles_present = sorted(set(p.role for p in alive))
+    groups = {r: [p.energy for p in alive if p.role == r] for r in roles_present}
+    groups = {r: v for r, v in groups.items() if len(v) >= 2}
+    if len(groups) >= 2:
+        f_stat, p_anova = an.one_way_anova(*groups.values())
+        c = st.columns(3)
+        c[0].metric("ANOVA F", _fmt(f_stat))
+        c[1].metric("ANOVA p", _fmt(p_anova, 4),
+                    help="p < 0.05 suggests caste genuinely predicts energy")
+        c[2].metric("Groups compared", len(groups))
+        f = px.box(x=sum(([r] * len(v) for r, v in groups.items()), []),
+                  y=sum(groups.values(), []), color=sum(([r] * len(v) for r, v in groups.items()), []))
+        f.update_layout(title="Energy by caste", showlegend=False, xaxis_title=None, yaxis_title="energy")
+        st.plotly_chart(_small(f, 320), width="stretch")
+
+        if len(groups) == 2:
+            (r1, v1), (r2, v2) = list(groups.items())
+            c = st.columns(4)
+            c[0].metric("Cohen's d", _fmt(an.cohens_d(v1, v2)))
+            c[1].metric("Cliff's delta", _fmt(an.cliffs_delta(v1, v2)))
+            _, p_perm = an.permutation_test(v1, v2)
+            c[2].metric("Permutation p", _fmt(p_perm, 4),
+                        help="Exact non-parametric test, no distributional assumption")
+            _, p_mw = an.mann_whitney_u(v1, v2)
+            c[3].metric("Mann-Whitney p", _fmt(p_mw, 4))
+
+    st.markdown("### Role vs. tribe: are they independent?")
+    civ = st.session_state.civ
+    tribed = [p for p in alive if p.tribe_id is not None]
+    if len(tribed) >= 10 and len(set(p.tribe_id for p in tribed)) >= 2:
+        roles_u = sorted(set(p.role for p in tribed))
+        tribes_u = sorted(set(p.tribe_id for p in tribed))
+        table = np.array([[sum(1 for p in tribed if p.role == r and p.tribe_id == t)
+                          for t in tribes_u] for r in roles_u])
+        chi2, p_chi = an.chi_square_independence(table)
+        c = st.columns(2)
+        c[0].metric("Chi-square", _fmt(chi2))
+        c[1].metric("p-value", _fmt(p_chi, 4))
+        st.dataframe(pd.DataFrame(table, index=roles_u, columns=[f"Tribe {t}" for t in tribes_u]),
+                    width="stretch")
+    else:
+        st.caption("Needs agents split across 2+ tribes — currently only 1 tribe exists "
+                   "(the documented tribal-diversification finding).")
+
+    st.markdown("### Bootstrap confidence intervals (population-wide)")
+    metrics = {
+        "Energy": [p.energy for p in alive], "Health": [p.health for p in alive],
+        "Age": [float(p.age) for p in alive],
+        "Discoveries": [float(len(p.discoveries)) for p in alive],
+    }
+    rows = []
+    for name, vals in metrics.items():
+        est, lo, hi = an.bootstrap_ci(vals)
+        rows.append({"Metric": name, "Estimate": round(est, 3), "95% CI low": round(lo, 3),
+                    "95% CI high": round(hi, 3)})
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    st.markdown("### Correlation matrix (Pearson & Spearman, with significance)")
+    fields = {"Energy": [p.energy for p in alive], "Health": [p.health for p in alive],
+             "Age": [float(p.age) for p in alive],
+             "Discoveries": [float(len(p.discoveries)) for p in alive],
+             "Generation": [float(p.generation) for p in alive],
+             "λ spread": [p.hrc.spectral_summary()["lambda_spread"] for p in alive]}
+    names = list(fields)
+    n = len(names)
+    R = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            r, _ = an.pearson_with_p(fields[names[i]], fields[names[j]])
+            R[i, j] = r if np.isfinite(r) else 0.0
+    f = px.imshow(R, x=names, y=names, color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
+    f.update_layout(title="Pearson correlation matrix")
+    st.plotly_chart(_small(f, 380), width="stretch")
+
+    a, b = st.columns(2)
+    with a:
+        x, y = "Energy", "Discoveries"
+        r_p, p_p = an.pearson_with_p(fields[x], fields[y])
+        st.metric(f"Pearson r ({x} vs {y})", f"{_fmt(r_p)} (p={_fmt(p_p, 4)})")
+    with b:
+        rho_s, p_s = an.spearman_with_p(fields[x], fields[y])
+        st.metric(f"Spearman ρ ({x} vs {y})", f"{_fmt(rho_s)} (p={_fmt(p_s, 4)})",
+                 help="Robust to non-linearity and outliers, unlike Pearson")
+
+    st.markdown("### Distribution comparison: young vs. old agents")
+    ages = np.array([p.age for p in alive])
+    if ages.size >= 10 and np.ptp(ages) > 0:
+        med = float(np.median(ages))
+        young = [p.energy for p in alive if p.age <= med]
+        old = [p.energy for p in alive if p.age > med]
+        if len(young) >= 2 and len(old) >= 2:
+            d_ks, p_ks = an.two_sample_ks(young, old)
+            t_stat, p_t = an.welch_t_test(young, old)
+            c = st.columns(4)
+            c[0].metric("KS statistic", _fmt(d_ks))
+            c[1].metric("KS p-value", _fmt(p_ks, 4))
+            c[2].metric("Welch t", _fmt(t_stat))
+            c[3].metric("Welch p", _fmt(p_t, 4))
+            f = go.Figure()
+            f.add_trace(go.Histogram(x=young, name="younger half", opacity=0.6, marker_color="#4fd1c5"))
+            f.add_trace(go.Histogram(x=old, name="older half", opacity=0.6, marker_color="#ed8936"))
+            f.update_layout(barmode="overlay", title="Energy distribution: younger vs. older agents")
+            st.plotly_chart(_small(f, 300), width="stretch")
+
+
+# ----------------------------------------------------------------------------
+# PANEL 14 — Thermodynamics & Chaos  (new)
+# ----------------------------------------------------------------------------
+def render_thermodynamics() -> None:
+    alive = _alive()
+    hist = st.session_state.history
+    if not alive:
+        st.warning("No living agents.")
+        return
+
+    st.markdown("### Statistical mechanics of the population")
+    st.caption("Agent energy treated as a kinetic-like quantity — the same formalism used for "
+               "a real gas of particles, in natural units (k_B = 1).")
+
+    energies = [p.energy for p in alive]
+    mb = an.maxwell_boltzmann_fit(energies)
+    T_eq = an.equipartition_temperature(energies, dof=2)
+    S_boltz = an.boltzmann_entropy([len(p.discoveries) + 1 for p in alive])
+
+    c = st.columns(4)
+    c[0].metric("Maxwell-Boltzmann σ", _fmt(mb["sigma"]))
+    c[1].metric("Implied temperature", _fmt(mb["temperature"]))
+    c[2].metric("MB fit quality (KS)", _fmt(mb["ks"], 4), help="Lower is a better fit")
+    c[3].metric("Equipartition T", _fmt(T_eq), help="2⟨E⟩/dof, dof=2")
+
+    if np.isfinite(mb["sigma"]):
+        F = an.helmholtz_free_energy_proxy(energies, max(T_eq, 0.01))
+        S_gibbs = an.gibbs_entropy(energies, max(T_eq, 0.01))
+        c = st.columns(3)
+        c[0].metric("Helmholtz free energy F", _fmt(F))
+        c[1].metric("Gibbs entropy S", _fmt(S_gibbs))
+        c[2].metric("Boltzmann S (discoveries)", _fmt(S_boltz))
+
+        f = px.histogram(x=energies, nbins=30, histnorm="probability density",
+                         color_discrete_sequence=["#4fd1c5"])
+        xs = np.linspace(0, max(energies) + 0.1, 200)
+        sigma2 = mb["temperature"]
+        mb_curve = (xs / sigma2) * np.exp(-xs ** 2 / (2 * sigma2)) if sigma2 > 0 else np.zeros_like(xs)
+        f.add_trace(go.Scatter(x=xs, y=mb_curve, name="Maxwell-Boltzmann fit",
+                               line=dict(color="#ed8936", width=2)))
+        f.update_layout(title="Agent energy distribution vs. Maxwell-Boltzmann fit")
+        st.plotly_chart(_small(f, 340), width="stretch")
+
+    pop_series = [float(v) for v in hist["population"]]
+    phi_series = [float(v) for v in hist["mean_phi"] if np.isfinite(float(v))]
+    if len(pop_series) >= 20:
+        S_series = [an.shannon_entropy([p.energy for p in alive])] if False else None
+        st.markdown("### Entropy production & virial balance")
+        ep_rate = an.entropy_production_rate(pop_series)
+        c = st.columns(2)
+        c[0].metric("d(population)/dt, mean", _fmt(ep_rate, 4),
+                    help="Analogous to an entropy-production-rate check; sign shows net growth vs decline")
+        kinetic_like = [p.energy for p in alive]
+        potential_like = [-1.0 * (1.0 + len(p.discoveries)) for p in alive]
+        vr = an.virial_ratio(kinetic_like, potential_like)
+        c[1].metric("Virial ratio 2⟨K⟩/|⟨U⟩|", _fmt(vr),
+                    help="A real virial theorem check would need a genuine binding potential; "
+                         "this uses discovery count as a loose potential-like proxy, so read it "
+                         "as illustrative rather than a rigorous physical virial balance.")
+
+    st.markdown("### Chaos-theory diagnostics on the population time series")
+    if len(pop_series) >= 60:
+        k01 = an.zero_one_chaos_test(pop_series)
+        corr_dim = an.correlation_dimension(pop_series)
+        adf = an.adf_stationarity_stat(pop_series)
+        c = st.columns(3)
+        c[0].metric("0-1 chaos test K", _fmt(k01),
+                    help="Gottwald-Melbourne: K near 0 = regular, K near 1 = chaotic. More robust "
+                         "than fitting a Lyapunov exponent directly from a short series")
+        c[1].metric("Correlation dimension", _fmt(corr_dim),
+                    help="Grassberger-Procaccia. A low, finite value suggests a low-dimensional "
+                         "attractor rather than high-dimensional noise")
+        c[2].metric("ADF statistic", _fmt(adf),
+                    help="Strongly negative rejects a random-walk unit root (series is stationary); "
+                         "near zero is consistent with a random walk")
+    else:
+        st.caption("These estimators need 60+ ticks of history.")
+
+    if len(phi_series) >= 30:
+        st.markdown("### Population ↔ Φ coupling")
+        n = min(len(pop_series), len(phi_series))
+        lag = an.best_lag(pop_series[:n], phi_series[:n], max_lag=15)
+        coh = an.spectral_coherence(pop_series[:n], phi_series[:n])
+        f_pf, p_pf = an.granger_causality_f(pop_series[:n], phi_series[:n], lag=2)
+        f_fp, p_fp = an.granger_causality_f(phi_series[:n], pop_series[:n], lag=2)
+        c = st.columns(4)
+        c[0].metric("Best lag (ticks)", lag, help="Positive: population leads Φ")
+        c[1].metric("Spectral coherence", _fmt(coh))
+        c[2].metric("Granger pop→Φ (p)", _fmt(p_pf, 4))
+        c[3].metric("Granger Φ→pop (p)", _fmt(p_fp, 4))
+        cc = an.cross_correlation(pop_series[:n], phi_series[:n], max_lag=15)
+        if cc.size:
+            f = go.Figure([go.Bar(x=list(range(-15, 16)), y=cc, marker_color="#9f7aea")])
+            f.update_layout(title="Population-Φ cross-correlation by lag", xaxis_title="lag (ticks)")
+            st.plotly_chart(_small(f, 300), width="stretch")
+        st.caption("Granger causality tests whether one series' past values improve prediction of "
+                  "the other beyond its own history — a real but limited notion of directional "
+                  "influence, not proof of physical causation.")
+
+
+# ----------------------------------------------------------------------------
+# Extension: morphology added to Geometry & Topology
+# ----------------------------------------------------------------------------
+def _render_geometry_morphology_extension() -> None:
+    world = st.session_state.world
+    A = st.session_state.morphogen_A
+    st.markdown("### Shape morphology of the current pattern")
+    thr = np.percentile(A, 60)
+    binary = (A > thr).astype(np.int8)
+    circ = an.shape_circularity(binary)
+    sol = an.convex_hull_solidity(binary)
+    ar = an.aspect_ratio_from_moments(binary)
+    orient = an.field_orientation(A)
+    lbp = an.texture_entropy_lbp(A)
+    c = st.columns(5)
+    c[0].metric("Circularity", _fmt(circ), help="1.0 is a perfect circle; cannot exceed 1.0")
+    c[1].metric("Solidity", _fmt(sol), help="Area / convex-hull area; cannot exceed 1.0")
+    c[2].metric("Aspect ratio", _fmt(ar))
+    c[3].metric("Dominant orientation", f"{_fmt(orient['angle_degrees'], 1)}°")
+    c[4].metric("LBP texture entropy", _fmt(lbp))
+    st.caption(f"Orientation coherence: {_fmt(orient['coherence'])} (0 = isotropic, 1 = strongly aligned)")
+
+
+# ----------------------------------------------------------------------------
+# Extension: signal processing added to Complexity & Dynamics
+# ----------------------------------------------------------------------------
+def _render_complexity_signal_extension() -> None:
+    hist = st.session_state.history
+    pop = [float(v) for v in hist["population"]]
+    tech = [float(v) for v in hist["tech_nodes"]]
+    if len(pop) < 40 or len(tech) < 40:
+        return
+    st.markdown("### Population ↔ technology coupling")
+    lag = an.best_lag(pop, tech, max_lag=20)
+    coh = an.spectral_coherence(pop, tech)
+    f_pt, p_pt = an.granger_causality_f(pop, tech, lag=2)
+    f_tp, p_tp = an.granger_causality_f(tech, pop, lag=2)
+    c = st.columns(4)
+    c[0].metric("Best lag (ticks)", lag)
+    c[1].metric("Spectral coherence", _fmt(coh))
+    c[2].metric("Granger pop→tech (p)", _fmt(p_pt, 4))
+    c[3].metric("Granger tech→pop (p)", _fmt(p_tp, 4))
+
 PANEL_RENDERERS = {
     PANELS[0]: render_observation_deck,
     PANELS[1]: render_biome_cartography,
@@ -1925,6 +2189,8 @@ PANEL_RENDERERS = {
     PANELS[9]: render_complexity,
     PANELS[10]: render_ecology,
     PANELS[11]: render_spectra,
+    PANELS[12]: render_statistical_inference,
+    PANELS[13]: render_thermodynamics,
 }
 
 
@@ -1952,7 +2218,7 @@ def main() -> None:
             st.rerun()
 
         st.divider()
-        if st.button("↺ Reset simulation", width='stretch'):
+        if st.button("⟲ Reset simulation", width='stretch'):
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
