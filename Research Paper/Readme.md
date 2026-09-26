@@ -172,14 +172,14 @@ H = H^\dagger.
 Its eigendecomposition is
 
 ```math
-H = V\,\operatorname{diag}(\lambda_0,\lambda_1,\ldots,\lambda_{K-1})\,V^\dagger.
+H = V\,\mathrm{diag}(\lambda_0,\lambda_1,\ldots,\lambda_{K-1})\,V^\dagger.
 ```
 
 The implementation propagates the state by applying the exact matrix exponential represented in the eigenbasis:
 
 ```math
 \psi(t+\Delta t)
-=V\,\operatorname{diag}\!\left(e^{-i\lambda_0\Delta t},\ldots,e^{-i\lambda_{K-1}\Delta t}\right)V^\dagger\psi(t).
+=V\,\mathrm{diag}\!\left(e^{-i\lambda_0\Delta t},\ldots,e^{-i\lambda_{K-1}\Delta t}\right)V^\dagger\psi(t).
 ```
 
 Because each factor has unit modulus and `V` is unitary, the update is norm-preserving up to floating-point error.
@@ -246,7 +246,7 @@ The current implementation partitions the 64-dimensional state into a 24-dimensi
 For any state block `x`, define
 
 ```math
-I(x)=\log_2\!\left(1+\operatorname{Var}(|x|)\right).
+I(x)=\log_2\!\left(1+\mathrm{Var}(|x|)\right).
 ```
 
 The implemented integration statistic is
@@ -382,7 +382,7 @@ Resource channels are clipped to the interval `[0,5]`.
 The environment contains sixteen pheromone channels and eight meme channels. Their generic update follows
 
 ```math
-S_{t+1}=\operatorname{clip}\!\left(\delta S_t+\gamma\nabla^2S_t,\;0,\;10\right).
+S_{t+1}=\mathrm{clip}\!\left(\delta S_t+\gamma\nabla^2S_t,\;0,\;10\right).
 ```
 
 The configured decay/diffusion constants are:
@@ -550,7 +550,7 @@ This produces a computational analogue of cultural/spectral inheritance while pr
 For two agents `a` and `b`, the resonance statistic uses the first task-band eigenvalues. With eigenvalue vectors `λ_a` and `λ_b`,
 
 ```math
-\rho(a,b)=\max\!\left(0.015,\frac{1+\operatorname{cos}(\lambda_a,\lambda_b)}{2}\right).
+\rho(a,b)=\max\!\left(0.015,\frac{1+\cos(\lambda_a,\lambda_b)}{2}\right).
 ```
 
 Communication uses resonance-weighted state blending. If `σ_s=ψ_s\odot\omega_s` denotes the sender's soul-modulated broadcast, the receiver state is updated as
@@ -972,7 +972,7 @@ Kaplan–Meier survival analysis is implemented directly from observed ages, wit
 The analysis stack provides Shannon/joint entropy, mutual information, KL divergence, Jensen–Shannon divergence and a normalized compression distance:
 
 ```math
-\operatorname{NCD}(x,y)
+\mathrm{NCD}(x,y)
 =\frac{C(xy)-\min(C(x),C(y))}{\max(C(x),C(y))}.
 ```
 
@@ -983,7 +983,7 @@ The implemented transfer-entropy routine is explicitly a **proxy** based on mutu
 For a density matrix with eigenvalues `p_i`, von Neumann entropy is
 
 ```math
-S(\rho)=-\operatorname{Tr}(\rho\ln\rho)=-\sum_i p_i\ln p_i.
+S(\rho)=-\mathrm{Tr}(\rho\ln\rho)=-\sum_i p_i\ln p_i.
 ```
 
 For a pure state, this is zero. The separate measurement-entropy routine uses Born probabilities `|ψ_i|²`.
@@ -991,7 +991,7 @@ For a pure state, this is zero. The separate measurement-entropy routine uses Bo
 The module also computes purity
 
 ```math
-\operatorname{Purity}(\rho)=\operatorname{Tr}(\rho^2),
+\mathrm{Purity}(\rho)=\mathrm{Tr}(\rho^2),
 ```
 
 state fidelity
@@ -1600,11 +1600,11 @@ For comparative studies, repeat each condition across multiple seeds and report 
 For example, an age-distribution study can define the two cohorts by the exact current implementation:
 
 ```math
-Y=\operatorname{bottom}_{\lfloor N/2\rfloor}\{\text{agents sorted by age}\},
+Y=\mathrm{bottom}_{\lfloor N/2\rfloor}\{\text{agents sorted by age}\},
 ```
 
 ```math
-O=\operatorname{top}_{\lfloor N/2\rfloor}\{\text{agents sorted by age}\}.
+O=\mathrm{top}_{\lfloor N/2\rfloor}\{\text{agents sorted by age}\}.
 ```
 
 Then compare energy using both the distribution-free KS statistic and Welch's unequal-variance t statistic. This is preferable to deciding a priori that one age cohort “must” differ from the other.
